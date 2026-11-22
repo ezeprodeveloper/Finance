@@ -5,10 +5,9 @@ import path from 'path';
 import {defineConfig} from 'vite';
 
 function resolveBasePath(): string {
-  const explicit = process.env.VITE_BASE_PATH;
-  if (explicit && explicit.trim().length > 0) {
-    const normalized = '/' + explicit.trim().replace(/^\/+|\/+$/g, '') + '/';
-    return normalized === '//' ? '/' : normalized;
+  const explicit = process.env.VITE_BASE_PATH?.trim();
+  if (explicit && explicit !== '/' && explicit.length > 0) {
+    return '/' + explicit.replace(/^\/+|\/+$/g, '') + '/';
   }
   if (process.env.GITHUB_PAGES === 'true') {
     const ghRepo = process.env.GITHUB_REPOSITORY;

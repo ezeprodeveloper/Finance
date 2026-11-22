@@ -229,16 +229,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
       - id: pages
         uses: actions/configure-pages@v5
-        with:
-          enablement: true
-      - run: npm install
+      - run: npm install --legacy-peer-deps
       - run: npm run build
         env:
           GITHUB_PAGES: "true"
-          VITE_BASE_PATH: "\${{ steps.pages.outputs.base_path }}/"
+          VITE_BASE_PATH: "\${{ steps.pages.outputs.base_path }}"
       - run: |
           touch dist/.nojekyll
           cp dist/index.html dist/404.html
