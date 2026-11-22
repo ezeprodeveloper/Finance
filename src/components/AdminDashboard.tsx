@@ -26,6 +26,7 @@ import {
   ShortVideoCampaign,
   SystemSettings,
   TaskSubmission,
+  UserInvestment,
   WithdrawalRequest,
 } from '../types/finance';
 import { formatDateTime, formatRwf, readFileAsDataUrl } from '../utils/formatters';
@@ -36,6 +37,7 @@ import { StatusLabel } from './StatusLabel';
 interface AdminDashboardProps {
   users: RegisteredUser[];
   loans: LoanRequest[];
+  investments: UserInvestment[];
   withdrawals: WithdrawalRequest[];
   videoCampaigns: ShortVideoCampaign[];
   customTasks: CustomTask[];
@@ -52,6 +54,7 @@ interface AdminDashboardProps {
   onReviewCustomTask: (taskId: string, decision: 'active' | 'rejected') => void;
   onReviewTaskSubmission: (submissionId: string, decision: 'approved' | 'rejected', note?: string) => void;
   onReviewLoan: (loanId: string, decision: 'approved' | 'rejected') => void;
+  onReviewInvestment: (investmentId: string, decision: 'active' | 'rejected') => void;
   onReviewWithdrawal: (withdrawalId: string, decision: 'paid' | 'rejected') => void;
   onAddPromotion: (title: string, category: string, summary: string) => void;
   onTogglePromotion: (promoId: string) => void;
@@ -105,6 +108,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
   const pendingTasks = props.customTasks.filter((t) => t.status === 'pending_admin').length;
   const pendingSubmissions = props.taskSubmissions.filter((s) => s.status === 'pending_admin').length;
   const pendingLoans = props.loans.filter((l) => l.status === 'pending_admin').length;
+  const pendingInvestments = props.investments.filter((i) => i.status === 'pending_admin').length;
   const pendingWithdrawals = props.withdrawals.filter((w) => w.status === 'pending_admin').length;
 
   const totalWithdrawalFees = props.withdrawals
@@ -321,9 +325,9 @@ export function AdminDashboard(props: AdminDashboardProps) {
                       onClick={() => setSection('loans_withdrawals')}
                       className="w-full px-4 py-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg flex items-center justify-between"
                     >
-                      <span>Loans &amp; Withdrawal Requests</span>
+                      <span>Investments, Loans &amp; Withdrawal Requests</span>
                       <span className="font-mono font-semibold text-[#071B38]">
-                        {pendingLoans + pendingWithdrawals}
+                        {pendingInvestments + pendingLoans + pendingWithdrawals}
                       </span>
                     </button>
                   </div>
@@ -487,13 +491,22 @@ export function AdminDashboard(props: AdminDashboardProps) {
                     <div key={u.id} className="p-6 space-y-4">
                       <div className="flex flex-wrap items-start justify-between gap-4">
                         <div className="flex items-start gap-4">
-                          {u.kycData?.idDocumentPhotoDataUrl && (
-                            <img
-                              src={u.kycData.idDocumentPhotoDataUrl}
-                              alt="Rwanda National ID document"
-                              className="w-28 h-20 rounded-lg object-cover border border-slate-300 shrink-0"
-                            />
-                          )}
+                          <div className="flex items-center gap-2 shrink-0">
+                            {u.kycData?.idDocumentPhotoDataUrl && (
+                              <img
+                                src={u.kycData.idDocumentPhotoDataUrl}
+                                alt="Rwanda National ID document"
+                                className="w-24 h-18 rounded-lg object-cover border border-slate-300"
+                              />
+                            )}
+                            {u.kycData?.selfiePhotoDataUrl && (
+                              <img
+                                src={u.kycData.selfiePhotoDataUrl}
+                                alt="Member KYC selfie"
+                                className="w-18 h-18 rounded-lg object-cover border border-slate-300"
+                              />
+                            )}
+                          </div>
                           <div className="text-xs space-y-1">
                             <h3 className="text-sm font-bold text-[#071B38]">
                               {u.firstName} {u.secondName} ({u.accountNumber})
@@ -740,106 +753,172 @@ export function AdminDashboard(props: AdminDashboardProps) {
             </div>
           )}
 
-          {/* 5. Loans & Withdrawals Desk */}
+          {/* 5. Investment Plans, Loans & Withdrawals Desk */}
           {section === 'loans_withdrawals' && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <section className="bg-white/95 border border-slate-200 rounded-xl overflow-hidden h-fit">
+            <div className="space-y-6">
+              {/* Investment Plan Deposits */}
+              <section className="bg-white/95 border border-slate-200 rounded-xl overflow-hidden">
                 <div className="px-6 py-4 border-b border-slate-200">
-                  <h2 className="text-base font-semibold text-slate-900">Loan requests</h2>
+                  <h2 className="text-base font-semibold text-slate-900">Investment plan deposits (Daily ROI)</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Verify MoMo deposits to activate daily 24-hour payouts and grant 10% referral commissions.
+                  </p>
                 </div>
-                {props.loans.length === 0 ? (
-                  <div className="p-8 text-center text-sm text-slate-500">No loan requests yet.</div>
+                {props.investments.length === 0 ? (
+                  <div className="p-8 text-center text-sm text-slate-500">No investment deposits submitted yet.</div>
                 ) : (
                   <div className="divide-y divide-slate-200">
-                    {props.loans.map((ln) => (
-                      <div key={ln.id} className="p-5 space-y-2.5">
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <h3 className="text-sm font-semibold text-slate-900">
-                              {ln.userName} · {ln.product}
-                            </h3>
-                            <p className="text-xs font-mono text-slate-500 tabular-nums">
-                              {formatRwf(ln.principalRwf)} · {ln.termMonths} mo · Repayable {formatRwf(ln.totalRepayableRwf)}
-                            </p>
-                          </div>
-                          <StatusLabel
-                            label={ln.status}
-                            tone={ln.status === 'approved' || ln.status === 'repaid' ? 'success' : ln.status === 'rejected' ? 'danger' : 'warning'}
-                          />
+                    {props.investments.map((inv) => (
+                      <div key={inv.id} className="p-5 flex flex-wrap items-center justify-between gap-4">
+                        <div className="space-y-1">
+                          <h3 className="text-sm font-semibold text-slate-900">
+                            {inv.userName} · {inv.planName}
+                          </h3>
+                          <p className="text-xs font-mono text-slate-600 tabular-nums">
+                            Deposit: {formatRwf(inv.depositRwf)} · Daily ROI: +{formatRwf(inv.dailyReturnRwf)}/24h · Ref: {inv.paymentRef} ({inv.paymentCode})
+                          </p>
+                          <p className="text-[11px] font-mono text-slate-400">
+                            Earned so far: {formatRwf(inv.totalEarnedRwf)} · Submitted {formatDateTime(inv.createdAt)}
+                          </p>
                         </div>
-                        <p className="text-xs text-slate-600">{ln.reason}</p>
-                        {ln.status === 'pending_admin' && (
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => props.onReviewLoan(ln.id, 'approved')}
-                              className="h-8 px-3 bg-emerald-700 text-white text-xs font-semibold rounded-md"
-                            >
-                              Approve &amp; Disburse to Wallet
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => props.onReviewLoan(ln.id, 'rejected')}
-                              className="h-8 px-3 bg-red-50 border border-red-200 text-red-800 text-xs font-semibold rounded-md"
-                            >
-                              Reject
-                            </button>
-                          </div>
-                        )}
+                        <div className="flex items-center gap-2">
+                          <StatusLabel
+                            label={inv.status}
+                            tone={
+                              inv.status === 'active' || inv.status === 'completed'
+                                ? 'success'
+                                : inv.status === 'rejected'
+                                  ? 'danger'
+                                  : 'warning'
+                            }
+                          />
+                          {inv.status === 'pending_admin' && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => props.onReviewInvestment(inv.id, 'active')}
+                                className="h-8 px-3 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-md"
+                              >
+                                Confirm &amp; Activate
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => props.onReviewInvestment(inv.id, 'rejected')}
+                                className="h-8 px-3 bg-red-50 border border-red-200 text-red-800 text-xs font-semibold rounded-md"
+                              >
+                                Reject
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
                 )}
               </section>
 
-              <section className="bg-white/95 border border-slate-200 rounded-xl overflow-hidden h-fit">
-                <div className="px-6 py-4 border-b border-slate-200">
-                  <h2 className="text-base font-semibold text-slate-900">Mobile Money withdrawal requests</h2>
-                </div>
-                {props.withdrawals.length === 0 ? (
-                  <div className="p-8 text-center text-sm text-slate-500">No withdrawal requests yet.</div>
-                ) : (
-                  <div className="divide-y divide-slate-200">
-                    {props.withdrawals.map((wd) => (
-                      <div key={wd.id} className="p-5 space-y-2.5">
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <h3 className="text-sm font-semibold text-slate-900">
-                              {wd.userName} · {wd.provider}
-                            </h3>
-                            <p className="text-xs font-mono text-slate-600 tabular-nums">
-                              Phone: {wd.phone} · Gross {formatRwf(wd.grossAmountRwf)} · Fee ({wd.feePercent}%) {formatRwf(wd.feeRwf)} · Net Send:{' '}
-                              <strong className="text-emerald-700">{formatRwf(wd.netAmountRwf)}</strong>
-                            </p>
-                          </div>
-                          <StatusLabel
-                            label={wd.status}
-                            tone={wd.status === 'paid' ? 'success' : wd.status === 'rejected' ? 'danger' : 'warning'}
-                          />
-                        </div>
-                        {wd.status === 'pending_admin' && (
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => props.onReviewWithdrawal(wd.id, 'paid')}
-                              className="h-8 px-3 bg-emerald-700 text-white text-xs font-semibold rounded-md"
-                            >
-                              Mark MoMo Payout Sent
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => props.onReviewWithdrawal(wd.id, 'rejected')}
-                              className="h-8 px-3 bg-red-50 border border-red-200 text-red-800 text-xs font-semibold rounded-md"
-                            >
-                              Reject &amp; Refund Wallet
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    ))}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <section className="bg-white/95 border border-slate-200 rounded-xl overflow-hidden h-fit">
+                  <div className="px-6 py-4 border-b border-slate-200">
+                    <h2 className="text-base font-semibold text-slate-900">Loan requests</h2>
                   </div>
-                )}
-              </section>
+                  {props.loans.length === 0 ? (
+                    <div className="p-8 text-center text-sm text-slate-500">No loan requests yet.</div>
+                  ) : (
+                    <div className="divide-y divide-slate-200">
+                      {props.loans.map((ln) => (
+                        <div key={ln.id} className="p-5 space-y-2.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <h3 className="text-sm font-semibold text-slate-900">
+                                {ln.userName} · {ln.product}
+                              </h3>
+                              <p className="text-xs font-mono text-slate-500 tabular-nums">
+                                {formatRwf(ln.principalRwf)} · {ln.termMonths} mo · Repayable {formatRwf(ln.totalRepayableRwf)}
+                              </p>
+                            </div>
+                            <StatusLabel
+                              label={ln.status}
+                              tone={ln.status === 'approved' || ln.status === 'repaid' ? 'success' : ln.status === 'rejected' ? 'danger' : 'warning'}
+                            />
+                          </div>
+                          <p className="text-xs text-slate-600">{ln.reason}</p>
+                          {ln.status === 'pending_admin' && (
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => props.onReviewLoan(ln.id, 'approved')}
+                                className="h-8 px-3 bg-emerald-700 text-white text-xs font-semibold rounded-md"
+                              >
+                                Approve &amp; Disburse to Wallet
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => props.onReviewLoan(ln.id, 'rejected')}
+                                className="h-8 px-3 bg-red-50 border border-red-200 text-red-800 text-xs font-semibold rounded-md"
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+
+                <section className="bg-white/95 border border-slate-200 rounded-xl overflow-hidden h-fit">
+                  <div className="px-6 py-4 border-b border-slate-200">
+                    <h2 className="text-base font-semibold text-slate-900">Mobile Money withdrawal requests</h2>
+                  </div>
+                  {props.withdrawals.length === 0 ? (
+                    <div className="p-8 text-center text-sm text-slate-500">No withdrawal requests yet.</div>
+                  ) : (
+                    <div className="divide-y divide-slate-200">
+                      {props.withdrawals.map((wd) => (
+                        <div key={wd.id} className="p-5 space-y-2.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <h3 className="text-sm font-semibold text-slate-900">
+                                {wd.userName} · {wd.network}
+                              </h3>
+                              <p className="text-xs text-slate-700 mt-0.5">
+                                {wd.destinationType}: <strong className="font-mono">{wd.destinationValue}</strong> · Names: <strong>{wd.accountRegisteredNames}</strong>
+                              </p>
+                              <p className="text-xs font-mono text-slate-600 tabular-nums mt-0.5">
+                                Gross {formatRwf(wd.grossAmountRwf)} · Fee ({wd.feePercent}%) {formatRwf(wd.feeRwf)} · Net Send:{' '}
+                                <strong className="text-emerald-700">{formatRwf(wd.netAmountRwf)}</strong>
+                              </p>
+                            </div>
+                            <StatusLabel
+                              label={wd.status}
+                              tone={wd.status === 'paid' ? 'success' : wd.status === 'rejected' ? 'danger' : 'warning'}
+                            />
+                          </div>
+                          {wd.status === 'pending_admin' && (
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => props.onReviewWithdrawal(wd.id, 'paid')}
+                                className="h-8 px-3 bg-emerald-700 text-white text-xs font-semibold rounded-md"
+                              >
+                                Mark MoMo Payout Sent
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => props.onReviewWithdrawal(wd.id, 'rejected')}
+                                className="h-8 px-3 bg-red-50 border border-red-200 text-red-800 text-xs font-semibold rounded-md"
+                              >
+                                Reject &amp; Refund Wallet
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </div>
             </div>
           )}
 
@@ -1032,6 +1111,71 @@ export function AdminDashboard(props: AdminDashboardProps) {
                       className="w-full h-10 px-3 text-sm font-mono bg-white border border-slate-300 rounded-lg"
                     />
                   </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
+                      Subsequent Min Withdrawal (RWF)
+                    </label>
+                    <input
+                      type="number"
+                      min={100}
+                      value={settingsDraft.subsequentMinWithdrawalRwf}
+                      onChange={(e) =>
+                        setSettingsDraft({
+                          ...settingsDraft,
+                          subsequentMinWithdrawalRwf: Number(e.target.value) || 1000,
+                        })
+                      }
+                      className="w-full h-10 px-3 text-sm font-mono bg-white border border-slate-300 rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
+                      Subsequent Max Withdrawal (RWF)
+                    </label>
+                    <input
+                      type="number"
+                      min={500}
+                      value={settingsDraft.subsequentMaxWithdrawalRwf}
+                      onChange={(e) =>
+                        setSettingsDraft({
+                          ...settingsDraft,
+                          subsequentMaxWithdrawalRwf: Number(e.target.value) || 5000,
+                        })
+                      }
+                      className="w-full h-10 px-3 text-sm font-mono bg-white border border-slate-300 rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
+                      Referral Commission (%)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={50}
+                      value={settingsDraft.referralCommissionPercent}
+                      onChange={(e) =>
+                        setSettingsDraft({
+                          ...settingsDraft,
+                          referralCommissionPercent: Number(e.target.value) || 10,
+                        })
+                      }
+                      className="w-full h-10 px-3 text-sm font-mono bg-white border border-slate-300 rounded-lg"
+                    />
+                  </div>
+                  <div className="flex items-center pt-5">
+                    <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settingsDraft.maintenanceMode}
+                        onChange={(e) =>
+                          setSettingsDraft({ ...settingsDraft, maintenanceMode: e.target.checked })
+                        }
+                        className="w-4 h-4 rounded border-slate-300"
+                      />
+                      <span>Enable System Maintenance Mode</span>
+                    </label>
+                  </div>
                 </div>
 
                 <div>
@@ -1165,6 +1309,29 @@ export function AdminDashboard(props: AdminDashboardProps) {
                   value={editingUser.walletBalanceRwf}
                   onChange={(e) =>
                     setEditingUser({ ...editingUser, walletBalanceRwf: Number(e.target.value) || 0 })
+                  }
+                  className="w-full h-9 px-3 font-mono border border-slate-300 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Bonus Balance (RWF)</label>
+                <input
+                  type="number"
+                  value={editingUser.bonusBalanceRwf}
+                  onChange={(e) =>
+                    setEditingUser({ ...editingUser, bonusBalanceRwf: Number(e.target.value) || 0 })
+                  }
+                  className="w-full h-9 px-3 font-mono border border-slate-300 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Spin Credits</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={editingUser.spinCredits}
+                  onChange={(e) =>
+                    setEditingUser({ ...editingUser, spinCredits: Math.max(0, Number(e.target.value) || 0) })
                   }
                   className="w-full h-9 px-3 font-mono border border-slate-300 rounded-lg"
                 />

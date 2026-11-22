@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CheckCircle2, Copy, Lock, Play, Plus, Upload, Video } from 'lucide-react';
+import { CheckCircle2, Copy, Lock, PhoneCall, Play, Plus, Upload, Video } from 'lucide-react';
 import {
   CustomTask,
   RegisteredUser,
@@ -7,7 +7,12 @@ import {
   SystemSettings,
   TaskSubmission,
 } from '../../types/finance';
-import { buildMomoPayCode, formatRwf, readFileAsDataUrl } from '../../utils/formatters';
+import {
+  buildUssdFullCode,
+  buildUssdTelHref,
+  formatRwf,
+  readFileAsDataUrl,
+} from '../../utils/formatters';
 import { StatusLabel } from '../StatusLabel';
 
 interface UserVideosViewProps {
@@ -56,7 +61,9 @@ export function UserVideosView({
   const numericReward = Math.max(0, Number(rewardPerView) || 0);
   const numericViewers = Math.max(0, Number(targetViewers) || 0);
   const totalCost = numericReward * numericViewers;
-  const payCode = buildMomoPayCode(settings.momoPayCode, totalCost || settings.minVideoRewardRwf);
+  const effectiveVideoAmount = totalCost || settings.minVideoRewardRwf;
+  const payCode = buildUssdFullCode(settings.momoPayCode, effectiveVideoAmount);
+  const payHref = buildUssdTelHref(settings.momoPayCode, effectiveVideoAmount);
 
   const activeVideo = activeCampaigns.find((c) => c.id === activeVideoId) ?? null;
 
@@ -392,26 +399,41 @@ export function UserVideosView({
               </div>
 
               {/* Payment Code Instruction */}
-              <div className="bg-[#071B38] text-white rounded-xl p-4 space-y-2">
+              <div className="bg-[#071B38] text-white rounded-xl p-4 space-y-2.5">
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-slate-300">Total Campaign Cost</span>
                   <span className="font-mono text-base font-semibold text-emerald-300 tabular-nums">
                     {formatRwf(totalCost)}
                   </span>
                 </div>
-                <div className="pt-2 border-t border-white/15 flex items-center justify-between gap-2">
+                <div className="pt-2 border-t border-white/15 flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <p className="text-[11px] text-slate-300">Pay to E-Finance Rwanda MoMo Code:</p>
-                    <p className="font-mono text-base font-bold text-white tabular-nums">{payCode}</p>
+                    <p className="text-[11px] text-slate-300">Tap USSD or Copy Code to Pay:</p>
+                    <a
+                      href={payHref}
+                      className="font-mono text-base font-bold text-emerald-300 hover:underline inline-flex items-center gap-1.5 tabular-nums mt-0.5"
+                    >
+                      <PhoneCall className="w-3.5 h-3.5" />
+                      <span>{payCode}</span>
+                    </a>
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleCopyCode}
-                    className="h-8 px-3 bg-white/10 hover:bg-white/20 rounded-md text-xs font-semibold inline-flex items-center gap-1"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                    <span>{copiedCode ? 'Copied' : 'Copy Code'}</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <a
+                      href={payHref}
+                      className="h-8 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-xs font-semibold inline-flex items-center gap-1"
+                    >
+                      <PhoneCall className="w-3.5 h-3.5" />
+                      <span>Dial USSD</span>
+                    </a>
+                    <button
+                      type="button"
+                      onClick={handleCopyCode}
+                      className="h-8 px-3 bg-white/10 hover:bg-white/20 rounded-md text-xs font-semibold inline-flex items-center gap-1"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>{copiedCode ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -549,7 +571,8 @@ export function UserTasksView({
     submissions.some((s) => s.taskId === taskId && s.workerId === user.id);
 
   const totalTaskBudget = (Number(reward) || 0) * (Number(participants) || 0);
-  const payCode = buildMomoPayCode(settings.momoPayCode, totalTaskBudget || 100);
+  const payCode = buildUssdFullCode(settings.momoPayCode, totalTaskBudget || 100);
+  const taskPayHref = buildUssdTelHref(settings.momoPayCode, totalTaskBudget || 100);
 
   const handleSubmitProof = (e: React.FormEvent) => {
     e.preventDefault();
@@ -864,16 +887,25 @@ export function UserTasksView({
                 </div>
               </div>
 
-              <div className="bg-[#071B38] text-white rounded-xl p-4 space-y-1.5">
+              <div className="bg-[#071B38] text-white rounded-xl p-4 space-y-2">
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-slate-300">Total Task Budget</span>
                   <span className="font-mono text-base font-semibold text-emerald-300 tabular-nums">
                     {formatRwf(totalTaskBudget)}
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-300">
-                  MoMo Payment Code: <strong className="font-mono text-white">{payCode}</strong>
-                </p>
+                <div className="pt-2 border-t border-white/15 flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[11px] text-slate-300">
+                    USSD Code: <strong className="font-mono text-white">{payCode}</strong>
+                  </span>
+                  <a
+                    href={taskPayHref}
+                    className="h-8 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-xs font-semibold inline-flex items-center gap-1.5"
+                  >
+                    <PhoneCall className="w-3.5 h-3.5" />
+                    <span>Dial MoMo USSD</span>
+                  </a>
+                </div>
               </div>
 
               <div>

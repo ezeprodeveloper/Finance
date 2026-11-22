@@ -11,7 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import { AdminPromotion, SystemSettings } from '../types/finance';
-import { buildMomoPayCode, formatRwf, formatShortDate } from '../utils/formatters';
+import { formatShortDate } from '../utils/formatters';
 
 interface LandingViewProps {
   promotions: AdminPromotion[];
@@ -134,7 +134,7 @@ export function LandingView({
                     onClick={onOpenRegister}
                     className="h-12 px-6 bg-[#071B38] hover:bg-[#0c2954] text-white text-sm font-semibold rounded-lg inline-flex items-center gap-2 transition-colors whitespace-nowrap"
                   >
-                    <span>Create Account (3 Steps)</span>
+                    <span>Create Account</span>
                     <ArrowRight className="w-4 h-4" />
                   </button>
                   <button
@@ -142,36 +142,17 @@ export function LandingView({
                     onClick={onOpenLogin}
                     className="h-12 px-5 border border-slate-300 bg-white hover:bg-slate-100 text-slate-900 text-sm font-semibold rounded-lg transition-colors whitespace-nowrap"
                   >
-                    Member &amp; Admin Login
+                    Sign In
                   </button>
                 </div>
               </div>
 
-              <div className="mt-8 pt-6 border-t border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
-                <div>
-                  <span className="text-slate-500 block">Activation Fee</span>
-                  <span className="font-mono font-semibold text-slate-900 tabular-nums">
-                    {formatRwf(settings.activationFeeRwf)}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-slate-500 block">Welcome Bonus</span>
-                  <span className="font-mono font-semibold text-emerald-700 tabular-nums">
-                    +{formatRwf(settings.welcomeBonusRwf)}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-slate-500 block">Daily Check-In</span>
-                  <span className="font-mono font-semibold text-blue-800 tabular-nums">
-                    +{formatRwf(settings.dailyCheckInRwf)} / day
-                  </span>
-                </div>
-                <div>
-                  <span className="text-slate-500 block">Min Video Rate</span>
-                  <span className="font-mono font-semibold text-slate-900 tabular-nums">
-                    {formatRwf(settings.minVideoRewardRwf)} / view
-                  </span>
-                </div>
+              <div className="mt-8 pt-6 border-t border-slate-200 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs font-medium text-slate-500">
+                <span>Rwanda KYC Verified</span>
+                <span aria-hidden="true">·</span>
+                <span>MTN Mobile Money &amp; Airtel Money</span>
+                <span aria-hidden="true">·</span>
+                <span>Full RWF Transaction History</span>
               </div>
             </div>
 
@@ -179,12 +160,12 @@ export function LandingView({
             <div className="lg:col-span-5 bg-shifting-aurora text-white rounded-2xl p-7 sm:p-8 border border-slate-800 flex flex-col justify-between">
               <div className="space-y-5">
                 <div className="pb-4 border-b border-white/15">
-                  <p className="text-xs font-medium text-emerald-300">Rwanda Mobile Money Pay Code</p>
-                  <p className="font-mono text-2xl sm:text-3xl font-semibold tracking-tight text-white mt-1.5 tabular-nums">
-                    {buildMomoPayCode(settings.momoPayCode, settings.activationFeeRwf)}
-                  </p>
-                  <p className="text-xs text-slate-300 mt-1.5">
-                    Used for {formatRwf(settings.activationFeeRwf)} account activation and video/task campaign funding ({settings.momoPayCode}*amount#).
+                  <p className="text-xs font-medium text-emerald-300">Rwanda Digital Finance Network</p>
+                  <h2 className="font-display text-2xl font-bold text-white mt-1.5">
+                    Built for Rwanda&apos;s digital economy
+                  </h2>
+                  <p className="text-xs text-slate-300 mt-1.5 leading-relaxed">
+                    Manage personal savings, request financing, and participate in verified video and task campaigns from one unified account.
                   </p>
                 </div>
 
@@ -192,19 +173,19 @@ export function LandingView({
                   <div className="flex items-start gap-2.5">
                     <CheckCircle2 className="w-4 h-4 text-emerald-300 shrink-0 mt-0.5" />
                     <span className="text-slate-100">
-                      Rwanda KYC verification required before saving or withdrawing funds.
+                      Rwanda KYC verification protects every savings plan and Mobile Money withdrawal.
                     </span>
                   </div>
                   <div className="flex items-start gap-2.5">
                     <CheckCircle2 className="w-4 h-4 text-emerald-300 shrink-0 mt-0.5" />
                     <span className="text-slate-100">
-                      Admin verifies every task completion against requirements before payouts.
+                      Every task submission is verified against requirements before rewards release.
                     </span>
                   </div>
                   <div className="flex items-start gap-2.5">
                     <CheckCircle2 className="w-4 h-4 text-emerald-300 shrink-0 mt-0.5" />
                     <span className="text-slate-100">
-                      {settings.withdrawalFeePercent}% system fee applied transparently on withdrawals.
+                      Complete timestamped ledger with instant CSV statement downloads.
                     </span>
                   </div>
                 </div>
@@ -220,14 +201,14 @@ export function LandingView({
           </div>
         </section>
 
-        {/* Admin Promotions & Announcements visible BEFORE creating an account */}
+        {/* Public Updates & Promotions visible BEFORE creating an account */}
         <section id="announcements" className="max-w-[1200px] mx-auto px-4 sm:px-6 pb-14">
           <div className="bg-white/95 border border-slate-200 rounded-2xl p-6 sm:p-8">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-5 border-b border-slate-200">
               <div>
                 <p className="text-xs font-semibold text-blue-800 inline-flex items-center gap-1.5">
                   <Megaphone className="w-4 h-4" />
-                  <span>E-Finance Admin Updates &amp; Promotions</span>
+                  <span>E-Finance Updates &amp; Promotions</span>
                 </p>
                 <h2 className="font-display text-2xl font-bold text-[#071B38] mt-1">
                   Current announcements &amp; platform opportunities
@@ -244,7 +225,7 @@ export function LandingView({
 
             {visiblePromotions.length === 0 ? (
               <p className="py-8 text-sm text-slate-500">
-                No public announcements posted by E-Finance Admin yet.
+                No public announcements posted yet.
               </p>
             ) : (
               <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -291,7 +272,7 @@ export function LandingView({
               <Video className="w-5 h-5 text-emerald-700 mb-3" />
               <h3 className="font-display text-lg font-semibold text-[#071B38]">02. Watch &amp; Upload Short Videos</h3>
               <p className="mt-2 text-sm text-slate-600 leading-relaxed">
-                Earn RWF by watching approved short videos (once per video), or upload your own campaign video at {formatRwf(settings.minVideoRewardRwf)}+ per view using {settings.momoPayCode}*amount#.
+                Earn RWF by watching approved short videos (once per video), or upload your own promotional video campaign with custom viewer targets.
               </p>
             </article>
 
@@ -299,7 +280,7 @@ export function LandingView({
               <ShieldCheck className="w-5 h-5 text-amber-700 mb-3" />
               <h3 className="font-display text-lg font-semibold text-[#071B38]">03. Verified Custom Tasks</h3>
               <p className="mt-2 text-sm text-slate-600 leading-relaxed">
-                Publish custom tasks with exact requirements. E-Finance Admin verifies every submitted proof before approving rewards, and no user can repeat the same task twice.
+                Publish custom tasks with exact requirements. Every submitted proof is verified before rewards are approved, and no user can repeat the same task twice.
               </p>
             </article>
           </div>
@@ -321,23 +302,23 @@ export function LandingView({
               </div>
               <div className="border border-slate-200 rounded-xl p-5">
                 <span className="font-mono text-xs font-semibold text-blue-800">02</span>
-                <h3 className="text-sm font-semibold text-slate-900 mt-1.5">Admin Approval</h3>
+                <h3 className="text-sm font-semibold text-slate-900 mt-1.5">Account Review</h3>
                 <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
-                  E-Finance Admin reviews your profile details and photo before unlocking your activation payment screen.
+                  E-Finance reviews your profile details and identification photo before enabling account activation.
                 </p>
               </div>
               <div className="border border-slate-200 rounded-xl p-5">
                 <span className="font-mono text-xs font-semibold text-blue-800">03</span>
-                <h3 className="text-sm font-semibold text-slate-900 mt-1.5">200 RWF Activation &amp; Bonus</h3>
+                <h3 className="text-sm font-semibold text-slate-900 mt-1.5">Dashboard Activation</h3>
                 <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
-                  Pay {formatRwf(settings.activationFeeRwf)} via {buildMomoPayCode(settings.momoPayCode, settings.activationFeeRwf)}, unlock your dashboard, and receive your {formatRwf(settings.welcomeBonusRwf)} bonus.
+                  Complete account activation from your onboarding screen to unlock your wallet, bonus, and daily check-ins.
                 </p>
               </div>
               <div className="border border-slate-200 rounded-xl p-5">
                 <span className="font-mono text-xs font-semibold text-blue-800">04</span>
                 <h3 className="text-sm font-semibold text-slate-900 mt-1.5">Rwanda KYC for Savings &amp; Cashout</h3>
                 <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
-                  Submit Rwanda KYC details to unlock Saving Money and Mobile Money withdrawals (with {settings.withdrawalFeePercent}% system fee).
+                  Submit Rwanda KYC details to unlock Saving Money and Mobile Money withdrawals.
                 </p>
               </div>
             </div>

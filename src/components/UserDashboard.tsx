@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowUpRight,
   Banknote,
@@ -14,9 +14,12 @@ import {
   Lock,
   LogOut,
   Menu,
+  PhoneCall,
   PiggyBank,
   Search,
   ShieldCheck,
+  Sparkles,
+  TrendingUp,
   User as UserIcon,
   Video,
   X,
@@ -24,26 +27,31 @@ import {
 import {
   CustomTask,
   GitHubConfig,
+  InvestmentPlanTier,
   LoanRequest,
   RegisteredUser,
   RwandaKycData,
   SavingsGoal,
   ShortVideoCampaign,
+  SpinHistoryRecord,
   SystemSettings,
   TaskSubmission,
   TransactionRecord,
+  UserInvestment,
   UserPortalSection,
   WithdrawalRequest,
 } from '../types/finance';
 import {
-  buildMomoPayCode,
+  buildUssdFullCode,
+  buildUssdTelHref,
   formatDateTime,
   formatRwf,
-  todayRwandaDateKey,
 } from '../utils/formatters';
 import { ColorChangingClock } from './ColorChangingClock';
 import { GitHubHostModule } from './portal/GitHubHostModule';
 import { StatusLabel } from './StatusLabel';
+import { InvestmentPlansView } from './user/InvestmentPlansView';
+import { LuckySpinWheel } from './user/LuckySpinWheel';
 import {
   UserKycView,
   UserLoansView,
@@ -54,9 +62,12 @@ import { UserTasksView, UserVideosView } from './user/UserVideoTasksPanel';
 
 interface UserDashboardProps {
   user: RegisteredUser;
+  referredUsersCount: number;
   settings: SystemSettings;
   savingsGoals: SavingsGoal[];
   loans: LoanRequest[];
+  investments: UserInvestment[];
+  spinHistory: SpinHistoryRecord[];
   withdrawals: WithdrawalRequest[];
   videoCampaigns: ShortVideoCampaign[];
   customTasks: CustomTask[];
@@ -79,13 +90,18 @@ interface UserDashboardProps {
     totalRepayableRwf: number;
   }) => void;
   onRepayLoan: (loanId: string, amountRwf: number) => void;
+  onPurchasePlan: (tier: InvestmentPlanTier, paymentRef: string) => void;
+  onCompleteSpin: (rewardRwf: number) => void;
   onRequestWithdrawal: (payload: {
-    provider: 'MTN Mobile Money' | 'Airtel Money';
-    phone: string;
+    network: 'MTN Rwanda' | 'Airtel / Tigo Rwanda';
+    destinationType: 'Phone Number' | 'MoMo Pay Code';
+    destinationValue: string;
+    accountRegisteredNames: string;
     grossAmountRwf: number;
     feePercent: number;
     feeRwf: number;
     netAmountRwf: number;
+    isFirstBonusWithdrawal: boolean;
   }) => void;
   onWatchVideoComplete: (campaignId: string) => void;
   onCreateVideoCampaign: (payload: {
@@ -114,10 +130,12 @@ const NAV_ITEMS: Array<{
   icon: React.ComponentType<{ className?: string }>;
 }> = [
   { id: 'overview', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'invest', label: 'Investment Plans', icon: TrendingUp },
+  { id: 'spin', label: 'Lucky Spin & Referrals', icon: Sparkles },
   { id: 'kyc', label: 'Rwanda KYC', icon: ShieldCheck },
   { id: 'savings', label: 'Save Money', icon: PiggyBank },
   { id: 'loans', label: 'Borrow / Loans', icon: Banknote },
-  { id: 'withdrawals', label: 'Withdraw (25% fee)', icon: ArrowUpRight },
+  { id: 'withdrawals', label: 'Withdraw', icon: ArrowUpRight },
   { id: 'videos', label: 'Short Videos', icon: Video },
   { id: 'tasks', label: 'Paid Tasks', icon: ClipboardCheck },
   { id: 'transactions', label: 'History', icon: History },
@@ -138,14 +156,38 @@ export function UserDashboard(props: UserDashboardProps) {
   // Transactions filter
   const [txSearch, setTxSearch] = useState('');
   const [txCat, setTxCat] = useState<string>('All');
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
-  const todayKey = todayRwandaDateKey();
-  const checkedInToday = user.lastCheckInDate === todayKey;
+  const lastCheckInMs = user.lastCheckInAt ? Date.parse(user.lastCheckInAt) : 0;
+  const msRemainingForCheckIn = lastCheckInMs > 0 ? Math.max(0, lastCheckInMs + 86400000 - nowMs) : 0;
+  const checkInAvailable = msRemainingForCheckIn === 0;
+
+  useEffect(() => {
+    if (checkInAvailable) return;
+    const id = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [checkInAvailable]);
+
+  const formatCountdown = (ms: number): string => {
+    const totalSec = Math.ceil(ms / 1000);
+    const hrs = Math.floor(totalSec / 3600);
+    const mins = Math.floor((totalSec % 3600) / 60);
+    const secs = totalSec % 60;
+    return [hrs, mins, secs].map((n) => String(n).padStart(2, '0')).join(':');
+  };
 
   const userSavings = props.savingsGoals.filter((g) => g.userId === user.id);
   const userLoans = props.loans.filter((l) => l.userId === user.id);
+  const userInvestments = props.investments.filter((inv) => inv.userId === user.id);
+  const userSpins = props.spinHistory.filter((s) => s.userId === user.id);
   const userWithdrawals = props.withdrawals.filter((w) => w.userId === user.id);
   const userTransactions = props.transactions.filter((t) => t.userId === user.id);
+
+  const activeLoanBalanceRwf = userLoans
+    .filter((l) => l.status === 'approved')
+    .reduce((sum, l) => sum + Math.max(0, l.totalRepayableRwf - l.repaidRwf), 0);
 
   const filteredTransactions = useMemo(() => {
     const q = txSearch.trim().toLowerCase();
@@ -255,7 +297,8 @@ export function UserDashboard(props: UserDashboardProps) {
   /* Gate 2: 200 RWF System Activation Payment Dashboard                      */
   /* ------------------------------------------------------------------------ */
   if (user.accountStatus === 'awaiting_payment' || user.accountStatus === 'payment_submitted') {
-    const activationCode = buildMomoPayCode(settings.momoPayCode, settings.activationFeeRwf);
+    const activationCode = buildUssdFullCode(settings.momoPayCode, settings.activationFeeRwf);
+    const activationHref = buildUssdTelHref(settings.momoPayCode, settings.activationFeeRwf);
     return (
       <div className="min-h-screen bg-shifting-aurora text-white flex flex-col">
         <header className="px-4 sm:px-8 h-16 border-b border-white/15 flex items-center justify-between gap-4">
@@ -286,29 +329,42 @@ export function UserDashboard(props: UserDashboardProps) {
               </p>
             </div>
 
-            <div className="bg-[#071B38] text-white rounded-xl p-5 flex items-center justify-between gap-4">
+            <div className="bg-[#071B38] text-white rounded-xl p-5 space-y-3">
               <div>
-                <p className="text-xs text-slate-300">Dial Rwanda MoMo Payment Code</p>
-                <p className="font-mono text-2xl font-bold text-emerald-300 mt-1 tabular-nums">
-                  {activationCode}
-                </p>
+                <p className="text-xs text-slate-300">Tap to Dial Rwanda MoMo USSD Code</p>
+                <a
+                  href={activationHref}
+                  className="font-mono text-2xl font-bold text-emerald-300 hover:underline mt-1 inline-flex items-center gap-2 tabular-nums"
+                >
+                  <PhoneCall className="w-5 h-5" />
+                  <span>{activationCode}</span>
+                </a>
               </div>
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(activationCode);
-                    setCopiedActCode(true);
-                    setTimeout(() => setCopiedActCode(false), 1800);
-                  } catch {
-                    // ignore
-                  }
-                }}
-                className="h-9 px-3 bg-white/15 hover:bg-white/25 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5"
-              >
-                <Copy className="w-3.5 h-3.5" />
-                <span>{copiedActCode ? 'Copied' : 'Copy'}</span>
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <a
+                  href={activationHref}
+                  className="h-9 px-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1.5"
+                >
+                  <PhoneCall className="w-3.5 h-3.5" />
+                  <span>Dial Now</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(activationCode);
+                      setCopiedActCode(true);
+                      setTimeout(() => setCopiedActCode(false), 1800);
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                  className="h-9 px-3 bg-white/15 hover:bg-white/25 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>{copiedActCode ? 'Copied' : 'Copy Code'}</span>
+                </button>
+              </div>
             </div>
 
             {user.accountStatus === 'payment_submitted' ? (
@@ -514,14 +570,14 @@ export function UserDashboard(props: UserDashboardProps) {
               {/* 4-column balance strip */}
               <div className="bg-white/95 border border-slate-200 rounded-xl grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-slate-200">
                 <div className="p-5">
-                  <p className="text-xs text-slate-500">Available Wallet Balance</p>
+                  <p className="text-xs text-slate-500">Main Wallet Balance</p>
                   <p className="font-mono text-2xl font-semibold text-[#071B38] mt-1 tabular-nums">
                     {formatRwf(user.walletBalanceRwf)}
                   </p>
                   <p className="text-xs text-slate-500 font-mono mt-1">{user.accountNumber}</p>
                 </div>
                 <div className="p-5">
-                  <p className="text-xs text-slate-500">Total Saved</p>
+                  <p className="text-xs text-slate-500">Savings Vault Balance</p>
                   <p className="font-mono text-2xl font-semibold text-emerald-700 mt-1 tabular-nums">
                     {formatRwf(user.savingsBalanceRwf)}
                   </p>
@@ -534,17 +590,31 @@ export function UserDashboard(props: UserDashboardProps) {
                   </button>
                 </div>
                 <div className="p-5">
-                  <p className="text-xs text-slate-500">Rwanda KYC Status</p>
-                  <div className="mt-2">
+                  <p className="text-xs text-slate-500">Welcome Bonus &amp; Spins</p>
+                  <p className="font-mono text-2xl font-semibold text-amber-700 mt-1 tabular-nums">
+                    {formatRwf(user.bonusBalanceRwf)}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setSection('spin')}
+                    className="text-xs font-semibold text-blue-800 hover:underline mt-1"
+                  >
+                    {user.spinCredits} Lucky Spin{user.spinCredits === 1 ? '' : 's'} available →
+                  </button>
+                </div>
+                <div className="p-5">
+                  <p className="text-xs text-slate-500">Active Loan Balance</p>
+                  <p className="font-mono text-2xl font-semibold text-slate-900 mt-1 tabular-nums">
+                    {formatRwf(activeLoanBalanceRwf)}
+                  </p>
+                  <div className="mt-1.5 flex items-center justify-between gap-2">
                     <StatusLabel
                       label={
                         user.kycStatus === 'approved'
-                          ? 'Approved'
+                          ? 'KYC Verified'
                           : user.kycStatus === 'pending'
-                            ? 'Pending Review'
-                            : user.kycStatus === 'rejected'
-                              ? 'Rejected'
-                              : 'Required for Save/Withdraw'
+                            ? 'KYC Pending'
+                            : 'KYC Required'
                       }
                       tone={
                         user.kycStatus === 'approved'
@@ -554,54 +624,55 @@ export function UserDashboard(props: UserDashboardProps) {
                             : 'danger'
                       }
                     />
+                    {user.kycStatus !== 'approved' && (
+                      <button
+                        type="button"
+                        onClick={() => setSection('kyc')}
+                        className="text-xs font-semibold text-blue-800 hover:underline"
+                      >
+                        Verify →
+                      </button>
+                    )}
                   </div>
-                  {user.kycStatus !== 'approved' && (
-                    <button
-                      type="button"
-                      onClick={() => setSection('kyc')}
-                      className="text-xs font-semibold text-blue-800 hover:underline mt-1.5 block"
-                    >
-                      Complete KYC →
-                    </button>
-                  )}
-                </div>
-                <div className="p-5">
-                  <p className="text-xs text-slate-500">Daily Check-In Bonus</p>
-                  <p className="font-mono text-xl font-semibold text-slate-900 mt-1 tabular-nums">
-                    +{formatRwf(settings.dailyCheckInRwf)} / day
-                  </p>
-                  <p className="text-xs text-slate-500 mt-1">Streak: {user.checkInStreak} days</p>
                 </div>
               </div>
 
-              {/* Daily Check-in Card + Quick Actions */}
+              {/* Daily Check-in Card (strict 24h) + Recent Activity */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                 <section className="lg:col-span-5 bg-shifting-aurora text-white rounded-xl p-6 flex flex-col justify-between">
                   <div>
                     <p className="text-xs font-semibold text-emerald-300 inline-flex items-center gap-1.5">
                       <CalendarCheck className="w-4 h-4" />
-                      <span>Daily Member Check-In</span>
+                      <span>Daily 24-Hour Check-In · Streak {user.checkInStreak}</span>
                     </p>
                     <h2 className="font-display text-xl font-bold mt-2">
-                      Claim your daily {formatRwf(settings.dailyCheckInRwf)} reward
+                      Claim your {formatRwf(settings.dailyCheckInRwf)} every 24 hours
                     </h2>
                     <p className="text-xs text-slate-200 mt-1.5 leading-relaxed">
-                      Sign in once every day (Rwanda Kigali date {todayKey}) to add {formatRwf(settings.dailyCheckInRwf)} directly to your wallet balance.
+                      Every 24 hours you can claim {formatRwf(settings.dailyCheckInRwf)} directly to your Main Wallet balance.
                     </p>
                   </div>
                   <div className="mt-6">
-                    {checkedInToday ? (
-                      <div className="h-11 px-4 bg-white/15 rounded-lg text-xs font-semibold inline-flex items-center gap-2 text-emerald-300">
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>Today&apos;s {formatRwf(settings.dailyCheckInRwf)} Check-In Claimed</span>
+                    {!checkInAvailable ? (
+                      <div className="w-full h-11 px-4 bg-white/15 rounded-lg text-xs font-semibold inline-flex items-center justify-between gap-2 text-emerald-300">
+                        <span className="inline-flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>Check-In Claimed</span>
+                        </span>
+                        <span className="font-mono text-white tabular-nums">
+                          Next in {formatCountdown(msRemainingForCheckIn)}
+                        </span>
                       </div>
                     ) : (
                       <button
                         type="button"
-                        onClick={props.onDailyCheckIn}
+                        onClick={() => {
+                          props.onDailyCheckIn();
+                          setNowMs(Date.now());
+                        }}
                         className="w-full h-11 px-4 bg-white text-[#071B38] hover:bg-slate-100 rounded-lg text-sm font-semibold transition-colors"
                       >
-                        Claim Today&apos;s {formatRwf(settings.dailyCheckInRwf)}
+                        Claim {formatRwf(settings.dailyCheckInRwf)} Now
                       </button>
                     )}
                   </div>
@@ -647,6 +718,24 @@ export function UserDashboard(props: UserDashboardProps) {
                 </section>
               </div>
             </div>
+          )}
+
+          {section === 'invest' && (
+            <InvestmentPlansView
+              settings={settings}
+              investments={userInvestments}
+              onPurchasePlan={props.onPurchasePlan}
+            />
+          )}
+
+          {section === 'spin' && (
+            <LuckySpinWheel
+              user={user}
+              referredUsersCount={props.referredUsersCount}
+              referralCommissionPercent={settings.referralCommissionPercent}
+              spinHistory={userSpins}
+              onCompleteSpin={props.onCompleteSpin}
+            />
           )}
 
           {section === 'kyc' && (
@@ -708,22 +797,34 @@ export function UserDashboard(props: UserDashboardProps) {
             <div className="space-y-5">
               <div className="bg-white/95 border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex flex-wrap gap-2">
-                  {['All', 'Bonus', 'Check-In', 'Savings', 'Loan', 'Withdrawal', 'Video Reward', 'Task Reward', 'Campaign Payment'].map(
-                    (cat) => (
-                      <button
-                        key={cat}
-                        type="button"
-                        onClick={() => setTxCat(cat)}
-                        className={`px-2.5 py-1.5 text-xs font-medium rounded-md border ${
-                          txCat === cat
-                            ? 'bg-[#071B38] text-white border-[#071B38]'
-                            : 'bg-white text-slate-700 border-slate-200'
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    ),
-                  )}
+                  {[
+                    'All',
+                    'Bonus',
+                    'Check-In',
+                    'Savings',
+                    'Loan',
+                    'Investment ROI',
+                    'Investment Deposit',
+                    'Spin Win',
+                    'Referral Commission',
+                    'Withdrawal',
+                    'Video Reward',
+                    'Task Reward',
+                    'Campaign Payment',
+                  ].map((cat) => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setTxCat(cat)}
+                      className={`px-2.5 py-1.5 text-xs font-medium rounded-md border ${
+                        txCat === cat
+                          ? 'bg-[#071B38] text-white border-[#071B38]'
+                          : 'bg-white text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
                 </div>
 
                 <div className="flex items-center gap-2">

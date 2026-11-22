@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowLeft, ArrowRight, CheckCircle2, Lock, Upload, X } from 'lucide-react';
 import {
   EducationType,
@@ -7,15 +7,17 @@ import {
 } from '../types/finance';
 import {
   generateAccountNumber,
+  generateReferralCode,
   hashPassword,
   isValidRwandaId,
   isValidRwandaPhone,
   readFileAsDataUrl,
 } from '../utils/formatters';
+import { RwandaLocationSelector } from './RwandaLocationSelector';
 
 interface RegisterWizardProps {
   isOpen: boolean;
-  existingEmails: string[];
+  existingUsers: RegisteredUser[];
   onClose: () => void;
   onComplete: (newUser: RegisteredUser) => void;
   onSwitchToLogin: () => void;
@@ -23,7 +25,7 @@ interface RegisterWizardProps {
 
 export function RegisterWizard({
   isOpen,
-  existingEmails,
+  existingUsers,
   onClose,
   onComplete,
   onSwitchToLogin,
@@ -49,14 +51,24 @@ export function RegisterWizard({
   const [levelOrClass, setLevelOrClass] = useState('');
   const [facultyOrCombination, setFacultyOrCombination] = useState('');
 
-  // Step 3: Place of Birth, Residence & Password
+  // Step 3: Place of Birth, Residence, Referral & Password
   const [placeOfBirth, setPlaceOfBirth] = useState('');
   const [akarere, setAkarere] = useState('');
   const [umurenge, setUmurenge] = useState('');
   const [akagari, setAkagari] = useState('');
   const [umudugudu, setUmudugudu] = useState('');
+  const [referralCodeInput, setReferralCodeInput] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const refParam = params.get('ref');
+    if (refParam) {
+      setReferralCodeInput(refParam.trim().toUpperCase());
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -87,20 +99,30 @@ export function RegisterWizard({
       setError('Enter a valid email address.');
       return false;
     }
-    if (existingEmails.some((em) => em.toLowerCase() === normalizedEmail)) {
+    if (existingUsers.some((u) => u.email.toLowerCase() === normalizedEmail)) {
       setError('An account with this email already exists.');
       return false;
     }
+    const cleanPhone = phone.replace(/[\s-]/g, '');
     if (!isValidRwandaPhone(phone)) {
       setError('Enter a valid Rwanda phone number (e.g. +250 788 123 456 or 0788123456).');
+      return false;
+    }
+    if (existingUsers.some((u) => u.phone.replace(/[\s-]/g, '') === cleanPhone)) {
+      setError('An account with this phone number already exists.');
       return false;
     }
     if (!dateOfBirth) {
       setError('Select your date of birth.');
       return false;
     }
+    const cleanId = idNumber.replace(/\s/g, '');
     if (!isValidRwandaId(idNumber)) {
       setError('Enter a valid 16-digit Rwanda National ID number.');
+      return false;
+    }
+    if (existingUsers.some((u) => u.idNumber === cleanId)) {
+      setError('An account with this National ID number already exists.');
       return false;
     }
     if (!photoDataUrl) {
@@ -154,6 +176,11 @@ export function RegisterWizard({
       return;
     }
 
+    const cleanRef = referralCodeInput.trim().toUpperCase();
+    const referrer = cleanRef
+      ? existingUsers.find((u) => u.referralCode.toUpperCase() === cleanRef)
+      : undefined;
+
     setSubmitting(true);
     try {
       const passwordHash = await hashPassword(password);
@@ -182,10 +209,15 @@ export function RegisterWizard({
         },
         passwordHash,
         accountNumber: generateAccountNumber(),
+        referralCode: generateReferralCode(firstName.trim()),
+        referredByUserId: referrer?.id,
+        spinCredits: 0,
+        hasCompletedFirstWithdrawal: false,
         accountStatus: 'pending_approval',
         walletBalanceRwf: 0,
+        bonusBalanceRwf: 0,
         savingsBalanceRwf: 0,
-        lastCheckInDate: null,
+        lastCheckInAt: null,
         checkInStreak: 0,
         kycStatus: 'not_submitted',
         createdAt: new Date().toISOString(),
@@ -221,7 +253,7 @@ export function RegisterWizard({
             {step === 3 && 'Step 3: Place of Birth, Residence & Password'}
           </h2>
           <p className="text-xs text-slate-600 mt-1">
-            After submitting, E-Finance Admin reviews your registration before you activate your account with 200 RWF.
+            After submitting, E-Finance reviews your registration before you activate your account.
           </p>
         </div>
 
@@ -541,64 +573,36 @@ export function RegisterWizard({
                 />
               </div>
 
-              <div className="border-t border-slate-200 pt-4">
-                <p className="text-xs font-semibold text-slate-800 mb-3">
-                  Place of Residence (Rwanda Administrative Units — Optional during registration)
+              <div className="border-t border-slate-200 pt-4 space-y-3">
+                <p className="text-xs font-semibold text-slate-800">
+                  Current Residence (Rwanda Administrative Hierarchy — Optional)
                 </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                  <div>
-                    <label htmlFor="reg-akarere" className="block text-xs font-medium text-slate-700 mb-1">
-                      Akarere (Optional)
-                    </label>
-                    <input
-                      id="reg-akarere"
-                      type="text"
-                      value={akarere}
-                      onChange={(e) => setAkarere(e.target.value)}
-                      placeholder="e.g. Gasabo"
-                      className="w-full h-10 px-3 text-sm bg-white border border-slate-300 rounded-lg text-slate-900"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="reg-umurenge" className="block text-xs font-medium text-slate-700 mb-1">
-                      Umurenge (Optional)
-                    </label>
-                    <input
-                      id="reg-umurenge"
-                      type="text"
-                      value={umurenge}
-                      onChange={(e) => setUmurenge(e.target.value)}
-                      placeholder="e.g. Kimironko"
-                      className="w-full h-10 px-3 text-sm bg-white border border-slate-300 rounded-lg text-slate-900"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="reg-akagari" className="block text-xs font-medium text-slate-700 mb-1">
-                      Akagari (Optional)
-                    </label>
-                    <input
-                      id="reg-akagari"
-                      type="text"
-                      value={akagari}
-                      onChange={(e) => setAkagari(e.target.value)}
-                      placeholder="e.g. Kibagabaga"
-                      className="w-full h-10 px-3 text-sm bg-white border border-slate-300 rounded-lg text-slate-900"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="reg-umudugudu" className="block text-xs font-medium text-slate-700 mb-1">
-                      Umudugudu (Optional)
-                    </label>
-                    <input
-                      id="reg-umudugudu"
-                      type="text"
-                      value={umudugudu}
-                      onChange={(e) => setUmudugudu(e.target.value)}
-                      placeholder="e.g. Karisimbi"
-                      className="w-full h-10 px-3 text-sm bg-white border border-slate-300 rounded-lg text-slate-900"
-                    />
-                  </div>
-                </div>
+                <RwandaLocationSelector
+                  akarere={akarere}
+                  umurenge={umurenge}
+                  akagari={akagari}
+                  umudugudu={umudugudu}
+                  onChange={(loc) => {
+                    setAkarere(loc.akarere);
+                    setUmurenge(loc.umurenge);
+                    setAkagari(loc.akagari);
+                    setUmudugudu(loc.umudugudu);
+                  }}
+                />
+              </div>
+
+              <div>
+                <label htmlFor="reg-referral" className="block text-xs font-medium text-slate-700 mb-1">
+                  Referral Code (Optional)
+                </label>
+                <input
+                  id="reg-referral"
+                  type="text"
+                  value={referralCodeInput}
+                  onChange={(e) => setReferralCodeInput(e.target.value.toUpperCase())}
+                  placeholder="e.g. EF-RW102"
+                  className="w-full h-10 px-3 text-sm font-mono bg-white border border-slate-300 rounded-lg text-slate-900"
+                />
               </div>
 
               <div className="border-t border-slate-200 pt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">

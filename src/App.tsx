@@ -6,19 +6,24 @@ import { LoginModal } from './components/LoginModal';
 import { GitHubHostModule } from './components/portal/GitHubHostModule';
 import { RegisterWizard } from './components/RegisterWizard';
 import { UserDashboard } from './components/UserDashboard';
-import { loadPlatformState, savePlatformState } from './data/platformStore';
+import {
+  INVESTMENT_PLAN_TIERS,
+  loadPlatformState,
+  savePlatformState,
+} from './data/platformStore';
 import {
   GitHubConfig,
+  InvestmentPlanTier,
   PlatformStoreState,
   RegisteredUser,
   RwandaKycData,
   SavingsGoal,
   SystemSettings,
+  TransactionRecord,
 } from './types/finance';
 import {
-  buildMomoPayCode,
+  buildUssdFullCode,
   generateReference,
-  todayRwandaDateKey,
 } from './utils/formatters';
 
 export default function App() {
@@ -30,6 +35,83 @@ export default function App() {
   useEffect(() => {
     savePlatformState(store);
   }, [store]);
+
+  // Automated 24-hour Investment ROI distribution engine
+  useEffect(() => {
+    const processDailyRoi = () => {
+      const now = Date.now();
+      const dayMs = 86400000;
+
+      setStore((prev) => {
+        let changed = false;
+        const userCredits: Record<string, number> = {};
+        const newTransactions: TransactionRecord[] = [];
+
+        const nextInvestments = prev.investments.map((inv) => {
+          if (inv.status !== 'active' || !inv.lastRoiCreditedAt) return inv;
+          const lastMs = Date.parse(inv.lastRoiCreditedAt);
+          if (Number.isNaN(lastMs)) return inv;
+
+          const daysDue = Math.floor((now - lastMs) / dayMs);
+          if (daysDue < 1) return inv;
+
+          const tier = INVESTMENT_PLAN_TIERS.find((t) => t.id === inv.tierId);
+          const maxTotal = (tier?.durationDays ?? 30) * inv.dailyReturnRwf;
+          const daysCreditedSoFar = Math.floor(inv.totalEarnedRwf / inv.dailyReturnRwf);
+          const remainingDays = Math.max(0, (tier?.durationDays ?? 30) - daysCreditedSoFar);
+          const actualDays = Math.min(daysDue, remainingDays);
+
+          if (actualDays <= 0) {
+            changed = true;
+            return { ...inv, status: 'completed' as const };
+          }
+
+          changed = true;
+          const payout = actualDays * inv.dailyReturnRwf;
+          const nextEarned = Math.min(maxTotal, inv.totalEarnedRwf + payout);
+          const completed = nextEarned >= maxTotal;
+
+          userCredits[inv.userId] = (userCredits[inv.userId] ?? 0) + payout;
+          newTransactions.push({
+            id: `tx-roi-${Date.now()}-${inv.id}`,
+            userId: inv.userId,
+            reference: generateReference('ROI'),
+            title: `Daily Plan Return (${inv.planName} × ${actualDays}d)`,
+            category: 'Investment ROI',
+            channel: 'Automated 24h Yield Engine',
+            amountRwf: payout,
+            direction: 'credit',
+            status: 'Completed',
+            timestamp: new Date(lastMs + actualDays * dayMs).toISOString(),
+          });
+
+          return {
+            ...inv,
+            totalEarnedRwf: nextEarned,
+            lastRoiCreditedAt: new Date(lastMs + actualDays * dayMs).toISOString(),
+            status: completed ? ('completed' as const) : ('active' as const),
+          };
+        });
+
+        if (!changed) return prev;
+
+        return {
+          ...prev,
+          users: prev.users.map((u) =>
+            userCredits[u.id]
+              ? { ...u, walletBalanceRwf: u.walletBalanceRwf + userCredits[u.id] }
+              : u,
+          ),
+          investments: nextInvestments,
+          transactions: [...newTransactions, ...prev.transactions],
+        };
+      });
+    };
+
+    processDailyRoi();
+    const timer = window.setInterval(processDailyRoi, 60000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const currentUser =
     store.session.type === 'user'
@@ -110,9 +192,13 @@ export default function App() {
 
   const handleDailyCheckIn = () => {
     if (!currentUser) return;
-    const todayKey = todayRwandaDateKey();
-    if (currentUser.lastCheckInDate === todayKey) return;
+    const now = Date.now();
+    if (currentUser.lastCheckInAt) {
+      const lastMs = Date.parse(currentUser.lastCheckInAt);
+      if (!Number.isNaN(lastMs) && now - lastMs < 86400000) return;
+    }
 
+    const nowIso = new Date(now).toISOString();
     setStore((prev) => {
       const reward = prev.settings.dailyCheckInRwf;
       return {
@@ -122,23 +208,23 @@ export default function App() {
             ? {
                 ...u,
                 walletBalanceRwf: u.walletBalanceRwf + reward,
-                lastCheckInDate: todayKey,
+                lastCheckInAt: nowIso,
                 checkInStreak: u.checkInStreak + 1,
               }
             : u,
         ),
         transactions: [
           {
-            id: `tx-${Date.now()}`,
+            id: `tx-${now}`,
             userId: currentUser.id,
             reference: generateReference('CHK'),
-            title: `Daily Check-In Reward (${todayKey})`,
+            title: 'Daily 24h Check-In Reward',
             category: 'Check-In',
             channel: 'E-Finance Daily Check-In',
             amountRwf: reward,
             direction: 'credit',
             status: 'Completed',
-            timestamp: new Date().toISOString(),
+            timestamp: nowIso,
           },
           ...prev.transactions,
         ],
@@ -339,13 +425,100 @@ export default function App() {
     }));
   };
 
+  const handlePurchasePlan = (tier: InvestmentPlanTier, paymentRef: string) => {
+    if (!currentUser) return;
+    const payCode = buildUssdFullCode(store.settings.momoPayCode, tier.depositRwf);
+    setStore((prev) => ({
+      ...prev,
+      investments: [
+        {
+          id: `inv-${Date.now()}`,
+          userId: currentUser.id,
+          userName: `${currentUser.firstName} ${currentUser.secondName}`,
+          tierId: tier.id,
+          planName: tier.name,
+          depositRwf: tier.depositRwf,
+          dailyReturnRwf: tier.dailyReturnRwf,
+          paymentCode: payCode,
+          paymentRef,
+          status: 'pending_admin',
+          totalEarnedRwf: 0,
+          lastRoiCreditedAt: null,
+          createdAt: new Date().toISOString(),
+        },
+        ...prev.investments,
+      ],
+      transactions: [
+        {
+          id: `tx-${Date.now()}`,
+          userId: currentUser.id,
+          reference: generateReference('INV'),
+          title: `Investment Plan Deposit: ${tier.name}`,
+          category: 'Investment Deposit',
+          channel: `${payCode} · Ref ${paymentRef}`,
+          amountRwf: tier.depositRwf,
+          direction: 'debit',
+          status: 'Pending Review',
+          timestamp: new Date().toISOString(),
+        },
+        ...prev.transactions,
+      ],
+    }));
+  };
+
+  const handleCompleteSpin = (rewardRwf: number) => {
+    if (!currentUser || currentUser.spinCredits <= 0) return;
+    const safeReward = Math.max(0, Math.min(200, Math.round(rewardRwf)));
+    const nowIso = new Date().toISOString();
+
+    setStore((prev) => ({
+      ...prev,
+      users: prev.users.map((u) =>
+        u.id === currentUser.id
+          ? {
+              ...u,
+              spinCredits: Math.max(0, u.spinCredits - 1),
+              walletBalanceRwf: u.walletBalanceRwf + safeReward,
+            }
+          : u,
+      ),
+      spinHistory: [
+        {
+          id: `sp-${Date.now()}`,
+          userId: currentUser.id,
+          rewardRwf: safeReward,
+          spunAt: nowIso,
+        },
+        ...prev.spinHistory,
+      ],
+      transactions: [
+        {
+          id: `tx-${Date.now()}`,
+          userId: currentUser.id,
+          reference: generateReference('SPN'),
+          title: `Lucky Spin Wheel Reward (${safeReward} RWF)`,
+          category: 'Spin Win',
+          channel: 'E-Finance Lucky Wheel',
+          amountRwf: safeReward,
+          direction: 'credit',
+          status: 'Completed',
+          timestamp: nowIso,
+        },
+        ...prev.transactions,
+      ],
+    }));
+  };
+
   const handleRequestWithdrawal = (payload: {
-    provider: 'MTN Mobile Money' | 'Airtel Money';
-    phone: string;
+    network: 'MTN Rwanda' | 'Airtel / Tigo Rwanda';
+    destinationType: 'Phone Number' | 'MoMo Pay Code';
+    destinationValue: string;
+    accountRegisteredNames: string;
     grossAmountRwf: number;
     feePercent: number;
     feeRwf: number;
     netAmountRwf: number;
+    isFirstBonusWithdrawal: boolean;
   }) => {
     if (!currentUser || currentUser.kycStatus !== 'approved') return;
     if (payload.grossAmountRwf > currentUser.walletBalanceRwf) return;
@@ -373,9 +546,9 @@ export default function App() {
           id: `tx-${Date.now()}`,
           userId: currentUser.id,
           reference: generateReference('WDR'),
-          title: `Withdrawal (${payload.provider}) — Net ${payload.netAmountRwf} RWF`,
+          title: `Withdrawal (${payload.network}) — Net ${payload.netAmountRwf} RWF`,
           category: 'Withdrawal',
-          channel: `${payload.provider} · ${payload.phone} · ${payload.feePercent}% fee (${payload.feeRwf} RWF)`,
+          channel: `${payload.network} · ${payload.destinationType}: ${payload.destinationValue} (${payload.accountRegisteredNames}) · ${payload.feePercent}% fee`,
           amountRwf: payload.grossAmountRwf,
           feeRwf: payload.feeRwf,
           direction: 'debit',
@@ -443,7 +616,7 @@ export default function App() {
     if (!currentUser) return;
     if (payload.rewardPerViewRwf < store.settings.minVideoRewardRwf) return;
     const totalBudgetRwf = payload.rewardPerViewRwf * payload.targetViewers;
-    const paymentCode = buildMomoPayCode(store.settings.momoPayCode, totalBudgetRwf);
+    const paymentCode = buildUssdFullCode(store.settings.momoPayCode, totalBudgetRwf);
 
     setStore((prev) => ({
       ...prev,
@@ -527,7 +700,7 @@ export default function App() {
   }) => {
     if (!currentUser) return;
     const totalBudgetRwf = payload.rewardPerCompletionRwf * payload.targetCompletions;
-    const paymentCode = buildMomoPayCode(store.settings.momoPayCode, totalBudgetRwf);
+    const paymentCode = buildUssdFullCode(store.settings.momoPayCode, totalBudgetRwf);
 
     setStore((prev) => ({
       ...prev,
@@ -581,31 +754,67 @@ export default function App() {
 
   const handleActivateUserWithBonus = (userId: string) => {
     setStore((prev) => {
+      const targetUser = prev.users.find((u) => u.id === userId);
+      if (!targetUser) return prev;
       const bonus = prev.settings.welcomeBonusRwf;
+      const referrerId = targetUser.referredByUserId;
+      const referralCommRwf = Math.round(
+        (prev.settings.activationFeeRwf * prev.settings.referralCommissionPercent) / 100,
+      );
+      const nowIso = new Date().toISOString();
+
+      const extraTx: TransactionRecord[] = [
+        {
+          id: `tx-${Date.now()}`,
+          userId,
+          reference: generateReference('BNS'),
+          title: `Welcome Bonus (${bonus} RWF)`,
+          category: 'Bonus',
+          channel: 'E-Finance System Activation',
+          amountRwf: bonus,
+          direction: 'credit',
+          status: 'Completed',
+          timestamp: nowIso,
+        },
+      ];
+
+      if (referrerId && prev.users.some((u) => u.id === referrerId)) {
+        extraTx.push({
+          id: `tx-ref-${Date.now()}`,
+          userId: referrerId,
+          reference: generateReference('REF'),
+          title: `Referral Bonus +1 Spin (${targetUser.firstName} activated)`,
+          category: 'Referral Commission',
+          channel: `${prev.settings.referralCommissionPercent}% Activation Commission`,
+          amountRwf: referralCommRwf,
+          direction: 'credit',
+          status: 'Completed',
+          timestamp: nowIso,
+        });
+      }
+
       return {
         ...prev,
-        users: prev.users.map((u) =>
-          u.id === userId
-            ? {
-                ...u,
-                accountStatus: 'active',
-                walletBalanceRwf: u.walletBalanceRwf + bonus,
-              }
-            : u,
-        ),
+        users: prev.users.map((u) => {
+          if (u.id === userId) {
+            return {
+              ...u,
+              accountStatus: 'active',
+              walletBalanceRwf: u.walletBalanceRwf + bonus,
+              bonusBalanceRwf: u.bonusBalanceRwf + bonus,
+            };
+          }
+          if (referrerId && u.id === referrerId) {
+            return {
+              ...u,
+              spinCredits: u.spinCredits + 1,
+              walletBalanceRwf: u.walletBalanceRwf + referralCommRwf,
+            };
+          }
+          return u;
+        }),
         transactions: [
-          {
-            id: `tx-${Date.now()}`,
-            userId,
-            reference: generateReference('BNS'),
-            title: `Welcome Bonus (${bonus} RWF)`,
-            category: 'Bonus',
-            channel: 'E-Finance System Activation',
-            amountRwf: bonus,
-            direction: 'credit',
-            status: 'Completed',
-            timestamp: new Date().toISOString(),
-          },
+          ...extraTx,
           ...prev.transactions.map((t) =>
             t.userId === userId && t.category === 'Activation' && t.status === 'Pending Review'
               ? { ...t, status: 'Completed' as const }
@@ -762,20 +971,79 @@ export default function App() {
     }));
   };
 
+  const handleReviewInvestment = (investmentId: string, decision: 'active' | 'rejected') => {
+    const inv = store.investments.find((i) => i.id === investmentId);
+    if (!inv || inv.status !== 'pending_admin') return;
+
+    const nowIso = new Date().toISOString();
+    setStore((prev) => {
+      const investor = prev.users.find((u) => u.id === inv.userId);
+      const referrerId = decision === 'active' ? investor?.referredByUserId : undefined;
+      const commRwf = referrerId
+        ? Math.round((inv.depositRwf * prev.settings.referralCommissionPercent) / 100)
+        : 0;
+
+      const updatedTransactions = prev.transactions.map((t) =>
+        t.userId === inv.userId &&
+        t.category === 'Investment Deposit' &&
+        t.status === 'Pending Review' &&
+        t.amountRwf === inv.depositRwf
+          ? { ...t, status: decision === 'active' ? ('Completed' as const) : ('Rejected' as const) }
+          : t,
+      );
+
+      if (referrerId && commRwf > 0) {
+        updatedTransactions.unshift({
+          id: `tx-refinv-${Date.now()}`,
+          userId: referrerId,
+          reference: generateReference('REF'),
+          title: `10% Investment Commission (${inv.userName})`,
+          category: 'Referral Commission',
+          channel: `${inv.planName} Referral Commission`,
+          amountRwf: commRwf,
+          direction: 'credit',
+          status: 'Completed',
+          timestamp: nowIso,
+        });
+      }
+
+      return {
+        ...prev,
+        users:
+          referrerId && commRwf > 0
+            ? prev.users.map((u) =>
+                u.id === referrerId
+                  ? { ...u, walletBalanceRwf: u.walletBalanceRwf + commRwf }
+                  : u,
+              )
+            : prev.users,
+        investments: prev.investments.map((i) =>
+          i.id === investmentId
+            ? {
+                ...i,
+                status: decision,
+                lastRoiCreditedAt: decision === 'active' ? nowIso : null,
+              }
+            : i,
+        ),
+        transactions: updatedTransactions,
+      };
+    });
+  };
+
   const handleReviewWithdrawal = (withdrawalId: string, decision: 'paid' | 'rejected') => {
     const wd = store.withdrawals.find((w) => w.id === withdrawalId);
     if (!wd || wd.status !== 'pending_admin') return;
 
     setStore((prev) => ({
       ...prev,
-      users:
-        decision === 'rejected'
-          ? prev.users.map((u) =>
-              u.id === wd.userId
-                ? { ...u, walletBalanceRwf: u.walletBalanceRwf + wd.grossAmountRwf }
-                : u,
-            )
-          : prev.users,
+      users: prev.users.map((u) => {
+        if (u.id !== wd.userId) return u;
+        if (decision === 'rejected') {
+          return { ...u, walletBalanceRwf: u.walletBalanceRwf + wd.grossAmountRwf };
+        }
+        return { ...u, hasCompletedFirstWithdrawal: true };
+      }),
       withdrawals: prev.withdrawals.map((w) =>
         w.id === withdrawalId ? { ...w, status: decision } : w,
       ),
@@ -845,6 +1113,7 @@ export default function App() {
       <AdminDashboard
         users={store.users}
         loans={store.loans}
+        investments={store.investments}
         withdrawals={store.withdrawals}
         videoCampaigns={store.videoCampaigns}
         customTasks={store.customTasks}
@@ -861,6 +1130,7 @@ export default function App() {
         onReviewCustomTask={handleReviewCustomTask}
         onReviewTaskSubmission={handleReviewTaskSubmission}
         onReviewLoan={handleReviewLoan}
+        onReviewInvestment={handleReviewInvestment}
         onReviewWithdrawal={handleReviewWithdrawal}
         onAddPromotion={handleAddPromotion}
         onTogglePromotion={handleTogglePromotion}
@@ -872,13 +1142,48 @@ export default function App() {
     );
   }
 
+  if (store.settings.maintenanceMode) {
+    return (
+      <div className="min-h-screen bg-shifting-aurora text-white flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-white text-slate-900 rounded-2xl p-8 text-center space-y-4 shadow-2xl">
+          <h1 className="font-display text-2xl font-bold text-[#071B38]">Scheduled System Maintenance</h1>
+          <p className="text-sm text-slate-600 leading-relaxed">
+            E-Finance Rwanda is currently undergoing scheduled maintenance to improve platform services. Please check back shortly.
+          </p>
+          <button
+            type="button"
+            onClick={() => setLoginOpen(true)}
+            className="h-10 px-5 bg-[#071B38] text-white text-xs font-semibold rounded-lg"
+          >
+            Sign In
+          </button>
+          <LoginModal
+            isOpen={loginOpen}
+            users={store.users}
+            onClose={() => setLoginOpen(false)}
+            onLoginUser={handleLoginUser}
+            onLoginAdmin={handleLoginAdmin}
+            onSwitchToRegister={() => setLoginOpen(false)}
+          />
+        </div>
+      </div>
+    );
+  }
+
   if (store.session.type === 'user' && currentUser) {
+    const referredUsersCount = store.users.filter(
+      (u) => u.referredByUserId === currentUser.id && u.accountStatus === 'active',
+    ).length;
+
     return (
       <UserDashboard
         user={currentUser}
+        referredUsersCount={referredUsersCount}
         settings={store.settings}
         savingsGoals={store.savingsGoals}
         loans={store.loans}
+        investments={store.investments}
+        spinHistory={store.spinHistory}
         withdrawals={store.withdrawals}
         videoCampaigns={store.videoCampaigns}
         customTasks={store.customTasks}
@@ -893,6 +1198,8 @@ export default function App() {
         onWithdrawFromSavings={handleWithdrawFromSavings}
         onRequestLoan={handleRequestLoan}
         onRepayLoan={handleRepayLoan}
+        onPurchasePlan={handlePurchasePlan}
+        onCompleteSpin={handleCompleteSpin}
         onRequestWithdrawal={handleRequestWithdrawal}
         onWatchVideoComplete={handleWatchVideoComplete}
         onCreateVideoCampaign={handleCreateVideoCampaign}
@@ -947,7 +1254,7 @@ export default function App() {
 
       <RegisterWizard
         isOpen={registerOpen}
-        existingEmails={store.users.map((u) => u.email)}
+        existingUsers={store.users}
         onClose={() => setRegisterOpen(false)}
         onComplete={handleRegisterComplete}
         onSwitchToLogin={() => {

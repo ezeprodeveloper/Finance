@@ -38,6 +38,7 @@ export interface RwandaKycData {
   nextOfKinName: string;
   nextOfKinPhone: string;
   idDocumentPhotoDataUrl: string;
+  selfiePhotoDataUrl?: string;
   submittedAt: string;
   reviewNote?: string;
 }
@@ -56,12 +57,17 @@ export interface RegisteredUser {
   residence: ResidenceDetails;
   passwordHash: string;
   accountNumber: string;
+  referralCode: string;
+  referredByUserId?: string;
+  spinCredits: number;
+  hasCompletedFirstWithdrawal: boolean;
   accountStatus: AccountStatus;
   activationPaymentRef?: string;
   activationPaidPhone?: string;
   walletBalanceRwf: number;
+  bonusBalanceRwf: number;
   savingsBalanceRwf: number;
-  lastCheckInDate: string | null;
+  lastCheckInAt: string | null;
   checkInStreak: number;
   kycStatus: KycStatus;
   kycData?: RwandaKycData;
@@ -95,16 +101,50 @@ export interface LoanRequest {
   createdAt: string;
 }
 
+export interface InvestmentPlanTier {
+  id: string;
+  name: string;
+  depositRwf: number;
+  dailyReturnRwf: number;
+  durationDays: number;
+}
+
+export interface UserInvestment {
+  id: string;
+  userId: string;
+  userName: string;
+  tierId: string;
+  planName: string;
+  depositRwf: number;
+  dailyReturnRwf: number;
+  paymentCode: string;
+  paymentRef: string;
+  status: 'pending_admin' | 'active' | 'completed' | 'rejected';
+  totalEarnedRwf: number;
+  lastRoiCreditedAt: string | null;
+  createdAt: string;
+}
+
+export interface SpinHistoryRecord {
+  id: string;
+  userId: string;
+  rewardRwf: number;
+  spunAt: string;
+}
+
 export interface WithdrawalRequest {
   id: string;
   userId: string;
   userName: string;
-  provider: 'MTN Mobile Money' | 'Airtel Money';
-  phone: string;
+  network: 'MTN Rwanda' | 'Airtel / Tigo Rwanda';
+  destinationType: 'Phone Number' | 'MoMo Pay Code';
+  destinationValue: string;
+  accountRegisteredNames: string;
   grossAmountRwf: number;
   feePercent: number;
   feeRwf: number;
   netAmountRwf: number;
+  isFirstBonusWithdrawal: boolean;
   status: 'pending_admin' | 'paid' | 'rejected';
   createdAt: string;
 }
@@ -172,6 +212,10 @@ export interface TransactionRecord {
     | 'Video Reward'
     | 'Task Reward'
     | 'Campaign Payment'
+    | 'Investment ROI'
+    | 'Investment Deposit'
+    | 'Spin Win'
+    | 'Referral Commission'
     | 'Admin Adjustment';
   channel: string;
   amountRwf: number;
@@ -195,9 +239,13 @@ export interface SystemSettings {
   welcomeBonusRwf: number;
   dailyCheckInRwf: number;
   withdrawalFeePercent: number;
+  subsequentMinWithdrawalRwf: number;
+  subsequentMaxWithdrawalRwf: number;
+  referralCommissionPercent: number;
   minVideoRewardRwf: number;
   momoPayCode: string;
   platformTagline: string;
+  maintenanceMode: boolean;
 }
 
 export interface GitHubConfig {
@@ -278,6 +326,8 @@ export type UserPortalSection =
   | 'kyc'
   | 'savings'
   | 'loans'
+  | 'invest'
+  | 'spin'
   | 'withdrawals'
   | 'videos'
   | 'tasks'
@@ -299,6 +349,8 @@ export interface PlatformStoreState {
   users: RegisteredUser[];
   savingsGoals: SavingsGoal[];
   loans: LoanRequest[];
+  investments: UserInvestment[];
+  spinHistory: SpinHistoryRecord[];
   withdrawals: WithdrawalRequest[];
   videoCampaigns: ShortVideoCampaign[];
   customTasks: CustomTask[];

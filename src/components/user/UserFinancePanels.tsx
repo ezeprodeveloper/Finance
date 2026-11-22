@@ -15,6 +15,7 @@ import {
   isValidRwandaPhone,
   readFileAsDataUrl,
 } from '../../utils/formatters';
+import { RwandaLocationSelector } from '../RwandaLocationSelector';
 import { StatusLabel } from '../StatusLabel';
 
 /* -------------------------------------------------------------------------- */
@@ -38,23 +39,29 @@ export function UserKycView({ user, onSubmitKyc }: UserKycViewProps) {
   const [nextOfKinName, setNextOfKinName] = useState(user.kycData?.nextOfKinName ?? '');
   const [nextOfKinPhone, setNextOfKinPhone] = useState(user.kycData?.nextOfKinPhone ?? '');
   const [docPhoto, setDocPhoto] = useState(user.kycData?.idDocumentPhotoDataUrl ?? '');
+  const [selfiePhoto, setSelfiePhoto] = useState(user.kycData?.selfiePhotoDataUrl ?? '');
   const [docName, setDocName] = useState('');
+  const [selfieName, setSelfieName] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const handleDocUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhoto = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    setter: (val: string) => void,
+    nameSetter: (val: string) => void,
+  ) => {
     setError(null);
     const file = e.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith('image/')) {
-      setError('Upload an image of your Rwanda National ID.');
+      setError('Upload a valid image file (JPG, PNG, WebP).');
       return;
     }
     try {
       const dataUrl = await readFileAsDataUrl(file, 3);
-      setDocPhoto(dataUrl);
-      setDocName(file.name);
+      setter(dataUrl);
+      nameSetter(file.name);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to load ID photo.');
+      setError(err instanceof Error ? err.message : 'Unable to read image.');
     }
   };
 
@@ -66,16 +73,16 @@ export function UserKycView({ user, onSubmitKyc }: UserKycViewProps) {
       setError('Enter a valid 16-digit Rwanda National ID.');
       return;
     }
-    if (!akarere.trim() || !umurenge.trim() || !akagari.trim() || !umudugudu.trim()) {
-      setError('Complete Akarere, Umurenge, Akagari, and Umudugudu for Rwanda KYC.');
+    if (!akarere || !umurenge || !akagari || !umudugudu) {
+      setError('Select Akarere, Umurenge, Akagari, and Umudugudu for Rwanda KYC.');
       return;
     }
     if (!isValidRwandaPhone(nextOfKinPhone)) {
       setError('Enter a valid Rwanda phone number for Next of Kin.');
       return;
     }
-    if (!docPhoto) {
-      setError('Upload your Rwanda National ID verification photo.');
+    if (!docPhoto || !selfiePhoto) {
+      setError('Upload both your Rwanda National ID photo and selfie verification proof.');
       return;
     }
 
@@ -83,20 +90,21 @@ export function UserKycView({ user, onSubmitKyc }: UserKycViewProps) {
       nationalId: nationalId.replace(/\s/g, ''),
       idIssueDistrict: idIssueDistrict.trim(),
       province,
-      akarere: akarere.trim(),
-      umurenge: umurenge.trim(),
-      akagari: akagari.trim(),
-      umudugudu: umudugudu.trim(),
+      akarere,
+      umurenge,
+      akagari,
+      umudugudu,
       occupation: occupation.trim(),
       nextOfKinName: nextOfKinName.trim(),
       nextOfKinPhone: nextOfKinPhone.trim(),
       idDocumentPhotoDataUrl: docPhoto,
+      selfiePhotoDataUrl: selfiePhoto,
       submittedAt: new Date().toISOString(),
     });
   };
 
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-6 max-w-3xl space-y-5">
+    <div className="bg-white/95 border border-slate-200 rounded-xl p-6 max-w-3xl space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-200">
         <div>
           <h2 className="text-base font-semibold text-slate-900">Rwanda KYC Verification</h2>
@@ -107,12 +115,12 @@ export function UserKycView({ user, onSubmitKyc }: UserKycViewProps) {
         <StatusLabel
           label={
             user.kycStatus === 'approved'
-              ? 'KYC Approved'
+              ? 'VERIFIED'
               : user.kycStatus === 'pending'
-                ? 'Pending Admin Review'
+                ? 'PENDING'
                 : user.kycStatus === 'rejected'
-                  ? 'Rejected — Update & Resubmit'
-                  : 'Not Submitted'
+                  ? 'REJECTED'
+                  : 'UNVERIFIED'
           }
           tone={
             user.kycStatus === 'approved'
@@ -128,7 +136,7 @@ export function UserKycView({ user, onSubmitKyc }: UserKycViewProps) {
 
       {user.kycData?.reviewNote && (
         <div className="px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900">
-          <strong>Admin Review Note:</strong> {user.kycData.reviewNote}
+          <strong>Review Note:</strong> {user.kycData.reviewNote}
         </div>
       )}
 
@@ -188,7 +196,7 @@ export function UserKycView({ user, onSubmitKyc }: UserKycViewProps) {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label htmlFor="kyc-prov" className="block text-xs font-medium text-slate-700 mb-1">
                 Province *
@@ -207,61 +215,6 @@ export function UserKycView({ user, onSubmitKyc }: UserKycViewProps) {
               </select>
             </div>
             <div>
-              <label htmlFor="kyc-akarere" className="block text-xs font-medium text-slate-700 mb-1">
-                Akarere (District) *
-              </label>
-              <input
-                id="kyc-akarere"
-                type="text"
-                value={akarere}
-                onChange={(e) => setAkarere(e.target.value)}
-                required
-                className="w-full h-10 px-3 text-sm bg-white border border-slate-300 rounded-lg text-slate-900"
-              />
-            </div>
-            <div>
-              <label htmlFor="kyc-umurenge" className="block text-xs font-medium text-slate-700 mb-1">
-                Umurenge (Sector) *
-              </label>
-              <input
-                id="kyc-umurenge"
-                type="text"
-                value={umurenge}
-                onChange={(e) => setUmurenge(e.target.value)}
-                required
-                className="w-full h-10 px-3 text-sm bg-white border border-slate-300 rounded-lg text-slate-900"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div>
-              <label htmlFor="kyc-akagari" className="block text-xs font-medium text-slate-700 mb-1">
-                Akagari (Cell) *
-              </label>
-              <input
-                id="kyc-akagari"
-                type="text"
-                value={akagari}
-                onChange={(e) => setAkagari(e.target.value)}
-                required
-                className="w-full h-10 px-3 text-sm bg-white border border-slate-300 rounded-lg text-slate-900"
-              />
-            </div>
-            <div>
-              <label htmlFor="kyc-umudugudu" className="block text-xs font-medium text-slate-700 mb-1">
-                Umudugudu (Village) *
-              </label>
-              <input
-                id="kyc-umudugudu"
-                type="text"
-                value={umudugudu}
-                onChange={(e) => setUmudugudu(e.target.value)}
-                required
-                className="w-full h-10 px-3 text-sm bg-white border border-slate-300 rounded-lg text-slate-900"
-              />
-            </div>
-            <div>
               <label htmlFor="kyc-occ" className="block text-xs font-medium text-slate-700 mb-1">
                 Occupation / Source of Income *
               </label>
@@ -275,6 +228,20 @@ export function UserKycView({ user, onSubmitKyc }: UserKycViewProps) {
               />
             </div>
           </div>
+
+          <RwandaLocationSelector
+            akarere={akarere}
+            umurenge={umurenge}
+            akagari={akagari}
+            umudugudu={umudugudu}
+            required
+            onChange={(loc) => {
+              setAkarere(loc.akarere);
+              setUmurenge(loc.umurenge);
+              setAkagari(loc.akagari);
+              setUmudugudu(loc.umudugudu);
+            }}
+          />
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
@@ -305,18 +272,44 @@ export function UserKycView({ user, onSubmitKyc }: UserKycViewProps) {
             </div>
           </div>
 
-          <div className="border border-slate-200 rounded-xl p-4 bg-slate-50 flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold text-slate-900">National ID Card Photo Upload *</p>
-              <p className="text-xs text-slate-500">
-                {docName ? `Loaded: ${docName}` : 'Upload clear photo of your Rwanda National ID.'}
-              </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="border border-slate-200 rounded-xl p-4 bg-slate-50 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-slate-900">National ID Card Photo *</p>
+                <p className="text-[11px] text-slate-500 truncate">
+                  {docName || (docPhoto ? 'Uploaded' : 'Front/Back ID image')}
+                </p>
+              </div>
+              <label className="cursor-pointer h-9 px-3 bg-white border border-slate-300 hover:bg-slate-100 rounded-lg text-xs font-semibold text-slate-800 inline-flex items-center gap-1.5 shrink-0">
+                <Upload className="w-3.5 h-3.5" />
+                <span>Upload</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handlePhoto(e, setDocPhoto, setDocName)}
+                  className="sr-only"
+                />
+              </label>
             </div>
-            <label className="cursor-pointer h-9 px-3.5 bg-white border border-slate-300 hover:bg-slate-100 rounded-lg text-xs font-semibold text-slate-800 inline-flex items-center gap-1.5">
-              <Upload className="w-3.5 h-3.5" />
-              <span>{docPhoto ? 'Replace ID Photo' : 'Upload ID Photo'}</span>
-              <input type="file" accept="image/*" onChange={handleDocUpload} className="sr-only" />
-            </label>
+
+            <div className="border border-slate-200 rounded-xl p-4 bg-slate-50 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-slate-900">Selfie Verification Proof *</p>
+                <p className="text-[11px] text-slate-500 truncate">
+                  {selfieName || (selfiePhoto ? 'Uploaded' : 'Clear selfie with ID')}
+                </p>
+              </div>
+              <label className="cursor-pointer h-9 px-3 bg-white border border-slate-300 hover:bg-slate-100 rounded-lg text-xs font-semibold text-slate-800 inline-flex items-center gap-1.5 shrink-0">
+                <Upload className="w-3.5 h-3.5" />
+                <span>Upload</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handlePhoto(e, setSelfiePhoto, setSelfieName)}
+                  className="sr-only"
+                />
+              </label>
+            </div>
           </div>
 
           {error && (
@@ -330,7 +323,7 @@ export function UserKycView({ user, onSubmitKyc }: UserKycViewProps) {
             disabled={user.kycStatus === 'pending'}
             className="h-10 px-5 bg-[#071B38] hover:bg-[#0c2954] disabled:opacity-50 text-white text-sm font-semibold rounded-lg"
           >
-            {user.kycStatus === 'pending' ? 'KYC Pending Admin Review' : 'Submit Rwanda KYC'}
+            {user.kycStatus === 'pending' ? 'KYC Pending Review' : 'Submit Rwanda KYC'}
           </button>
         </form>
       )}
@@ -370,13 +363,13 @@ export function UserSavingsView({
 
   if (user.kycStatus !== 'approved') {
     return (
-      <div className="bg-white border border-slate-200 rounded-xl p-6 max-w-xl space-y-4">
+      <div className="bg-white/95 border border-slate-200 rounded-xl p-6 max-w-xl space-y-4">
         <div className="flex items-start gap-3">
           <ShieldAlert className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
           <div>
             <h2 className="text-base font-semibold text-slate-900">Rwanda KYC required for Savings</h2>
             <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-              Before you can save funds in E-Finance Rwanda, you must submit your full Rwanda KYC details and receive Admin approval.
+              Before you can save funds in E-Finance Rwanda, you must submit your full Rwanda KYC details and receive verification approval.
             </p>
           </div>
         </div>
@@ -395,7 +388,7 @@ export function UserSavingsView({
 
   return (
     <div className="space-y-6">
-      <div className="bg-white border border-slate-200 rounded-xl grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-slate-200">
+      <div className="bg-white/95 border border-slate-200 rounded-xl grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-slate-200">
         <div className="p-5">
           <p className="text-xs text-slate-500">Available Wallet Balance</p>
           <p className="font-mono text-2xl font-semibold text-[#071B38] mt-1 tabular-nums">
@@ -422,7 +415,7 @@ export function UserSavingsView({
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <section className="lg:col-span-7 bg-white border border-slate-200 rounded-xl divide-y divide-slate-200">
+        <section className="lg:col-span-7 bg-white/95 border border-slate-200 rounded-xl divide-y divide-slate-200">
           <div className="px-5 py-4 border-b border-slate-200">
             <h2 className="text-base font-semibold text-slate-900">Your savings plans</h2>
           </div>
@@ -471,7 +464,7 @@ export function UserSavingsView({
 
         <div className="lg:col-span-5 space-y-6">
           {goals.length > 0 && (
-            <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
+            <section className="bg-white/95 border border-slate-200 rounded-xl p-6 space-y-4">
               <h2 className="text-base font-semibold text-slate-900">Save or retrieve anytime</h2>
               <div>
                 <label htmlFor="sav-move-amt" className="block text-xs font-medium text-slate-700 mb-1">
@@ -534,7 +527,7 @@ export function UserSavingsView({
             </section>
           )}
 
-          <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-3.5">
+          <section className="bg-white/95 border border-slate-200 rounded-xl p-6 space-y-3.5">
             <h2 className="text-base font-semibold text-slate-900">Create savings plan</h2>
             <form
               onSubmit={(e) => {
@@ -655,13 +648,13 @@ export function UserLoansView({
     });
     setReason('');
     setNotice(
-      `Submitted request for ${formatRwf(principalNum)}. E-Finance Admin will review and disburse to your balance.`,
+      `Submitted request for ${formatRwf(principalNum)}. E-Finance will review and disburse to your balance.`,
     );
   };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-      <section className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-6">
+      <section className="lg:col-span-5 bg-white/95 border border-slate-200 rounded-xl p-6">
         <h2 className="text-base font-semibold text-slate-900 pb-3 border-b border-slate-200">
           Request / Borrow money from E-Finance
         </h2>
@@ -756,7 +749,7 @@ export function UserLoansView({
         </form>
       </section>
 
-      <section className="lg:col-span-7 bg-white border border-slate-200 rounded-xl overflow-hidden h-fit">
+      <section className="lg:col-span-7 bg-white/95 border border-slate-200 rounded-xl overflow-hidden h-fit">
         <div className="px-6 py-4 border-b border-slate-200">
           <h2 className="text-base font-semibold text-slate-900">Your loan requests &amp; repayments</h2>
         </div>
@@ -783,7 +776,7 @@ export function UserLoansView({
                             ? 'Repaid'
                             : ln.status === 'rejected'
                               ? 'Rejected'
-                              : 'Pending Admin'
+                              : 'Pending Review'
                       }
                       tone={
                         ln.status === 'approved' || ln.status === 'repaid'
@@ -835,7 +828,7 @@ export function UserLoansView({
 }
 
 /* -------------------------------------------------------------------------- */
-/* 4. Withdrawals View (KYC Required + 25% System Fee)                        */
+/* 4. Withdrawals View (KYC Required + First 25% Bonus Fee + 1k-5k Limits)    */
 /* -------------------------------------------------------------------------- */
 
 interface UserWithdrawalsViewProps {
@@ -844,12 +837,15 @@ interface UserWithdrawalsViewProps {
   withdrawals: WithdrawalRequest[];
   onGoToKyc: () => void;
   onRequestWithdrawal: (payload: {
-    provider: 'MTN Mobile Money' | 'Airtel Money';
-    phone: string;
+    network: 'MTN Rwanda' | 'Airtel / Tigo Rwanda';
+    destinationType: 'Phone Number' | 'MoMo Pay Code';
+    destinationValue: string;
+    accountRegisteredNames: string;
     grossAmountRwf: number;
     feePercent: number;
     feeRwf: number;
     netAmountRwf: number;
+    isFirstBonusWithdrawal: boolean;
   }) => void;
 }
 
@@ -860,21 +856,27 @@ export function UserWithdrawalsView({
   onGoToKyc,
   onRequestWithdrawal,
 }: UserWithdrawalsViewProps) {
-  const [provider, setProvider] = useState<'MTN Mobile Money' | 'Airtel Money'>('MTN Mobile Money');
-  const [phone, setPhone] = useState(user.phone);
-  const [amount, setAmount] = useState('200');
+  const isFirstBonusWithdrawal = !user.hasCompletedFirstWithdrawal;
+
+  const [network, setNetwork] = useState<'MTN Rwanda' | 'Airtel / Tigo Rwanda'>('MTN Rwanda');
+  const [destinationType, setDestinationType] = useState<'Phone Number' | 'MoMo Pay Code'>('Phone Number');
+  const [destinationValue, setDestinationValue] = useState(user.phone);
+  const [registeredNames, setRegisteredNames] = useState(`${user.firstName} ${user.secondName}`);
+  const [amount, setAmount] = useState(
+    isFirstBonusWithdrawal ? String(settings.welcomeBonusRwf) : String(settings.subsequentMinWithdrawalRwf),
+  );
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   if (user.kycStatus !== 'approved') {
     return (
-      <div className="bg-white border border-slate-200 rounded-xl p-6 max-w-xl space-y-4">
+      <div className="bg-white/95 border border-slate-200 rounded-xl p-6 max-w-xl space-y-4">
         <div className="flex items-start gap-3">
           <ShieldAlert className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
           <div>
             <h2 className="text-base font-semibold text-slate-900">Rwanda KYC required before withdrawing</h2>
             <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-              Submit your Rwanda KYC details and wait for Admin approval before requesting a Mobile Money withdrawal.
+              Submit your Rwanda KYC details and receive verification approval before requesting a Mobile Money withdrawal.
             </p>
           </div>
         </div>
@@ -890,7 +892,8 @@ export function UserWithdrawalsView({
   }
 
   const gross = Math.max(0, Math.round(Number(amount) || 0));
-  const feeRwf = Math.round((gross * settings.withdrawalFeePercent) / 100);
+  const appliedFeePercent = isFirstBonusWithdrawal ? settings.withdrawalFeePercent : 0;
+  const feeRwf = Math.round((gross * appliedFeePercent) / 100);
   const netRwf = Math.max(0, gross - feeRwf);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -898,35 +901,65 @@ export function UserWithdrawalsView({
     setError(null);
     setNotice(null);
 
-    if (!isValidRwandaPhone(phone)) {
-      setError('Enter a valid Rwanda Mobile Money phone number.');
+    if (network === 'Airtel / Tigo Rwanda' || destinationType === 'Phone Number') {
+      if (!isValidRwandaPhone(destinationValue)) {
+        setError('Enter a valid Rwanda mobile phone number (078/079/072/073).');
+        return;
+      }
+    } else if (destinationValue.trim().length < 4) {
+      setError('Enter a valid MTN MoMo Pay Code.');
       return;
     }
-    if (gross < 100) {
-      setError('Minimum withdrawal request is 100 RWF.');
+
+    if (registeredNames.trim().length < 3) {
+      setError('Enter the registered Mobile Money account names.');
       return;
     }
+
+    if (isFirstBonusWithdrawal) {
+      if (gross < 100) {
+        setError('First bonus withdrawal minimum is 100 RWF.');
+        return;
+      }
+    } else {
+      if (gross < settings.subsequentMinWithdrawalRwf) {
+        setError(
+          `Minimum withdrawal is ${formatRwf(settings.subsequentMinWithdrawalRwf)}.`,
+        );
+        return;
+      }
+      if (gross > settings.subsequentMaxWithdrawalRwf) {
+        setError(
+          `Maximum withdrawal per transaction is ${formatRwf(settings.subsequentMaxWithdrawalRwf)}.`,
+        );
+        return;
+      }
+    }
+
     if (gross > user.walletBalanceRwf) {
       setError(`Insufficient balance (${formatRwf(user.walletBalanceRwf)} available).`);
       return;
     }
 
     onRequestWithdrawal({
-      provider,
-      phone: phone.trim(),
+      network,
+      destinationType: network === 'Airtel / Tigo Rwanda' ? 'Phone Number' : destinationType,
+      destinationValue: destinationValue.trim(),
+      accountRegisteredNames: registeredNames.trim(),
       grossAmountRwf: gross,
-      feePercent: settings.withdrawalFeePercent,
+      feePercent: appliedFeePercent,
       feeRwf,
       netAmountRwf: netRwf,
+      isFirstBonusWithdrawal,
     });
     setNotice(
-      `Withdrawal submitted for ${formatRwf(gross)} (${settings.withdrawalFeePercent}% fee = ${formatRwf(feeRwf)}, Net payout = ${formatRwf(netRwf)}).`,
+      `Withdrawal submitted for ${formatRwf(gross)} via ${network} (${destinationValue.trim()}). Net payout: ${formatRwf(netRwf)}.`,
     );
   };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-      <section className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-6">
+      <section className="lg:col-span-5 bg-white/95 border border-slate-200 rounded-xl p-6">
         <div className="pb-3 border-b border-slate-200">
           <h2 className="text-base font-semibold text-slate-900">Withdraw to Mobile Money</h2>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -935,46 +968,114 @@ export function UserWithdrawalsView({
           </p>
         </div>
 
+        <div className="mt-4 px-3.5 py-2.5 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700">
+          {isFirstBonusWithdrawal ? (
+            <span>
+              <strong>First Withdrawal (Welcome Bonus):</strong> A {settings.withdrawalFeePercent}% fee applies automatically. Subsequent withdrawals allow{' '}
+              {formatRwf(settings.subsequentMinWithdrawalRwf)} – {formatRwf(settings.subsequentMaxWithdrawalRwf)}.
+            </span>
+          ) : (
+            <span>
+              <strong>Standard Withdrawal Limits:</strong> Minimum {formatRwf(settings.subsequentMinWithdrawalRwf)} · Maximum{' '}
+              {formatRwf(settings.subsequentMaxWithdrawalRwf)} per transaction.
+            </span>
+          )}
+        </div>
+
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-          <div className="grid grid-cols-2 gap-2">
-            {(['MTN Mobile Money', 'Airtel Money'] as const).map((net) => (
-              <button
-                key={net}
-                type="button"
-                onClick={() => setProvider(net)}
-                className={`h-10 px-3 text-xs font-semibold rounded-lg border ${
-                  provider === net
-                    ? 'bg-[#071B38] text-white border-[#071B38]'
-                    : 'bg-white text-slate-700 border-slate-300'
-                }`}
-              >
-                {net}
-              </button>
-            ))}
+          <div>
+            <span className="block text-xs font-medium text-slate-700 mb-1.5">Rwanda Network *</span>
+            <div className="grid grid-cols-2 gap-2">
+              {(['MTN Rwanda', 'Airtel / Tigo Rwanda'] as const).map((net) => (
+                <button
+                  key={net}
+                  type="button"
+                  onClick={() => {
+                    setNetwork(net);
+                    if (net === 'Airtel / Tigo Rwanda') setDestinationType('Phone Number');
+                  }}
+                  className={`h-10 px-3 text-xs font-semibold rounded-lg border ${
+                    network === net
+                      ? 'bg-[#071B38] text-white border-[#071B38]'
+                      : 'bg-white text-slate-700 border-slate-300'
+                  }`}
+                >
+                  {net}
+                </button>
+              ))}
+            </div>
           </div>
 
+          {network === 'MTN Rwanda' && (
+            <div>
+              <span className="block text-xs font-medium text-slate-700 mb-1.5">MTN Payout Destination *</span>
+              <div className="grid grid-cols-2 gap-2">
+                {(['Phone Number', 'MoMo Pay Code'] as const).map((dtype) => (
+                  <button
+                    key={dtype}
+                    type="button"
+                    onClick={() => {
+                      setDestinationType(dtype);
+                      setDestinationValue(dtype === 'Phone Number' ? user.phone : '');
+                    }}
+                    className={`h-9 px-3 text-xs font-semibold rounded-lg border ${
+                      destinationType === dtype
+                        ? 'bg-blue-800 text-white border-blue-800'
+                        : 'bg-white text-slate-700 border-slate-300'
+                    }`}
+                  >
+                    {dtype}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div>
-            <label htmlFor="wd-phone" className="block text-xs font-medium text-slate-700 mb-1">
-              Recipient Phone *
+            <label htmlFor="wd-dest" className="block text-xs font-medium text-slate-700 mb-1">
+              {network === 'MTN Rwanda' && destinationType === 'MoMo Pay Code'
+                ? 'MTN MoMo Pay Code *'
+                : `${network} Phone Number *`}
             </label>
             <input
-              id="wd-phone"
-              type="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              id="wd-dest"
+              type="text"
+              value={destinationValue}
+              onChange={(e) => setDestinationValue(e.target.value)}
+              placeholder={
+                network === 'MTN Rwanda' && destinationType === 'MoMo Pay Code'
+                  ? 'e.g. 1880554'
+                  : '+250 788 000 000'
+              }
               required
               className="w-full h-10 px-3 text-sm font-mono bg-white border border-slate-300 rounded-lg text-slate-900"
             />
           </div>
 
           <div>
+            <label htmlFor="wd-names" className="block text-xs font-medium text-slate-700 mb-1">
+              Registered Account Names *
+            </label>
+            <input
+              id="wd-names"
+              type="text"
+              value={registeredNames}
+              onChange={(e) => setRegisteredNames(e.target.value)}
+              placeholder="Exact names registered on Mobile Money"
+              required
+              className="w-full h-10 px-3 text-sm bg-white border border-slate-300 rounded-lg text-slate-900"
+            />
+          </div>
+
+          <div>
             <label htmlFor="wd-amt" className="block text-xs font-medium text-slate-700 mb-1">
-              Gross withdrawal amount (RWF) *
+              Withdrawal amount (RWF) *
             </label>
             <input
               id="wd-amt"
               type="number"
-              min={100}
+              min={isFirstBonusWithdrawal ? 100 : settings.subsequentMinWithdrawalRwf}
+              max={isFirstBonusWithdrawal ? undefined : settings.subsequentMaxWithdrawalRwf}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               required
@@ -984,11 +1085,15 @@ export function UserWithdrawalsView({
 
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-3.5 space-y-1.5 text-xs">
             <div className="flex justify-between text-slate-600">
-              <span>Gross deducted from wallet</span>
+              <span>Deducted from wallet</span>
               <span className="font-mono tabular-nums">{formatRwf(gross)}</span>
             </div>
             <div className="flex justify-between text-amber-800">
-              <span>E-Finance System Fee ({settings.withdrawalFeePercent}%)</span>
+              <span>
+                {isFirstBonusWithdrawal
+                  ? `First Bonus Withdrawal Fee (${settings.withdrawalFeePercent}%)`
+                  : 'Standard Withdrawal Fee (0%)'}
+              </span>
               <span className="font-mono tabular-nums">-{formatRwf(feeRwf)}</span>
             </div>
             <div className="flex justify-between font-semibold text-emerald-800 pt-1.5 border-t border-slate-200">
@@ -1009,7 +1114,7 @@ export function UserWithdrawalsView({
         </form>
       </section>
 
-      <section className="lg:col-span-7 bg-white border border-slate-200 rounded-xl overflow-hidden h-fit">
+      <section className="lg:col-span-7 bg-white/95 border border-slate-200 rounded-xl overflow-hidden h-fit">
         <div className="px-6 py-4 border-b border-slate-200">
           <h2 className="text-base font-semibold text-slate-900">Your withdrawal requests</h2>
         </div>
@@ -1021,14 +1126,16 @@ export function UserWithdrawalsView({
               <div key={wd.id} className="p-5 flex items-center justify-between gap-4">
                 <div>
                   <p className="text-sm font-semibold text-slate-900">
-                    {wd.provider} · {wd.phone}
+                    {wd.network} · {wd.destinationType}: {wd.destinationValue}
                   </p>
+                  <p className="text-xs text-slate-600">Names: {wd.accountRegisteredNames}</p>
                   <p className="text-xs font-mono text-slate-500 mt-0.5 tabular-nums">
-                    Gross {formatRwf(wd.grossAmountRwf)} · Fee {formatRwf(wd.feeRwf)} ({wd.feePercent}%) · Net {formatRwf(wd.netAmountRwf)}
+                    Gross {formatRwf(wd.grossAmountRwf)} · Fee ({wd.feePercent}%) {formatRwf(wd.feeRwf)} · Net{' '}
+                    {formatRwf(wd.netAmountRwf)}
                   </p>
                 </div>
                 <StatusLabel
-                  label={wd.status === 'paid' ? 'Paid' : wd.status === 'rejected' ? 'Rejected' : 'Pending Admin'}
+                  label={wd.status === 'paid' ? 'Paid' : wd.status === 'rejected' ? 'Rejected' : 'Pending Review'}
                   tone={wd.status === 'paid' ? 'success' : wd.status === 'rejected' ? 'danger' : 'warning'}
                 />
               </div>
