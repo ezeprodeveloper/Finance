@@ -4,9 +4,31 @@ import fs from 'fs';
 import path from 'path';
 import {defineConfig} from 'vite';
 
+function resolveBasePath(): string {
+  const explicit = process.env.VITE_BASE_PATH;
+  if (explicit && explicit.trim().length > 0) {
+    const normalized = '/' + explicit.trim().replace(/^\/+|\/+$/g, '') + '/';
+    return normalized === '//' ? '/' : normalized;
+  }
+  if (process.env.GITHUB_PAGES === 'true') {
+    const ghRepo = process.env.GITHUB_REPOSITORY;
+    if (ghRepo && ghRepo.includes('/')) {
+      const [owner, repo] = ghRepo.split('/');
+      if (repo.toLowerCase() === `${owner.toLowerCase()}.github.io`) {
+        return '/';
+      }
+      return `/${repo}/`;
+    }
+    return './';
+  }
+  return '/';
+}
+
+const rootDir = import.meta.dirname ?? path.resolve('.');
+
 export default defineConfig(() => {
   return {
-    base: process.env.GITHUB_PAGES === 'true' ? './' : '/',
+    base: resolveBasePath(),
     plugins: [
       react(),
       tailwindcss(),
@@ -20,8 +42,8 @@ export default defineConfig(() => {
           if (error) {
             return;
           }
-          const distDir = path.resolve(__dirname, 'dist');
-          const srcAssets = path.resolve(__dirname, 'src/assets');
+          const distDir = path.resolve(rootDir, 'dist');
+          const srcAssets = path.resolve(rootDir, 'src/assets');
           const distAssets = path.resolve(distDir, 'src/assets');
           if (fs.existsSync(distDir) && fs.existsSync(srcAssets)) {
             fs.cpSync(srcAssets, distAssets, {recursive: true, force: true});
@@ -31,7 +53,7 @@ export default defineConfig(() => {
     ],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': rootDir,
       },
     },
     server: {

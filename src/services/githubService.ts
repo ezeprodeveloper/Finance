@@ -210,7 +210,7 @@ export const GITHUB_PAGES_WORKFLOW_YAML = `name: Deploy E-Finance Rwanda to GitH
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "master"]
   workflow_dispatch:
 
 permissions:
@@ -230,11 +230,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
-      - run: npm ci
+      - id: pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - run: npm install
       - run: npm run build
         env:
           GITHUB_PAGES: "true"
+          VITE_BASE_PATH: "\${{ steps.pages.outputs.base_path }}/"
+      - run: |
+          touch dist/.nojekyll
+          cp dist/index.html dist/404.html
       - uses: actions/upload-pages-artifact@v3
         with:
           path: ./dist
