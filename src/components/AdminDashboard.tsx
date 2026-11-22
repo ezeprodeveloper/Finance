@@ -2,8 +2,7 @@ import React, { useState } from 'react';
 import {
   Banknote,
   CheckCircle2,
-  ClipboardCheck,
-  GitBranch,
+  Globe,
   LayoutDashboard,
   LogOut,
   Megaphone,
@@ -20,7 +19,6 @@ import {
   AdminPortalSection,
   AdminPromotion,
   CustomTask,
-  GitHubConfig,
   LoanRequest,
   RegisteredUser,
   ShortVideoCampaign,
@@ -31,7 +29,6 @@ import {
 } from '../types/finance';
 import { formatDateTime, formatRwf, readFileAsDataUrl } from '../utils/formatters';
 import { ColorChangingClock } from './ColorChangingClock';
-import { GitHubHostModule } from './portal/GitHubHostModule';
 import { StatusLabel } from './StatusLabel';
 
 interface AdminDashboardProps {
@@ -44,7 +41,9 @@ interface AdminDashboardProps {
   taskSubmissions: TaskSubmission[];
   promotions: AdminPromotion[];
   settings: SystemSettings;
-  githubConfig: GitHubConfig | null;
+  cloudConnected: boolean;
+  onTriggerPageLoad: (label?: string) => void;
+  onConnectAdminCloud: () => Promise<void>;
   onApproveUserRegistration: (userId: string) => void;
   onActivateUserWithBonus: (userId: string) => void;
   onToggleSuspendUser: (userId: string) => void;
@@ -60,7 +59,6 @@ interface AdminDashboardProps {
   onTogglePromotion: (promoId: string) => void;
   onDeletePromotion: (promoId: string) => void;
   onUpdateSettings: (next: SystemSettings) => void;
-  onSaveGitHubConfig: (next: GitHubConfig | null) => void;
   onSignOut: () => void;
 }
 
@@ -76,12 +74,18 @@ const ADMIN_NAV: Array<{
   { id: 'loans_withdrawals', label: 'Loans & Payouts', icon: Banknote },
   { id: 'promotions', label: 'Public Promotions', icon: Megaphone },
   { id: 'settings', label: 'System Settings', icon: Settings },
-  { id: 'github', label: 'GitHub Host', icon: GitBranch },
 ];
 
 export function AdminDashboard(props: AdminDashboardProps) {
   const [section, setSection] = useState<AdminPortalSection>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [syncingCloud, setSyncingCloud] = useState(false);
+
+  const handleSelectSection = (next: AdminPortalSection) => {
+    if (next === section) return;
+    props.onTriggerPageLoad('Loading section...');
+    setSection(next);
+  };
 
   // User editor modal state
   const [editingUser, setEditingUser] = useState<RegisteredUser | null>(null);
@@ -148,7 +152,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
               <button
                 key={item.id}
                 type="button"
-                onClick={() => setSection(item.id)}
+                onClick={() => handleSelectSection(item.id)}
                 className={`w-full h-10 px-3 rounded-lg text-sm font-medium flex items-center gap-3 transition-colors whitespace-nowrap ${
                   isActive
                     ? 'bg-white text-[#071B38] font-semibold'
@@ -167,6 +171,29 @@ export function AdminDashboard(props: AdminDashboardProps) {
             <p className="font-semibold text-white">System Administrator</p>
             <p className="font-mono text-[11px] text-slate-300 truncate">ezeprodeveloper@gmail.com</p>
           </div>
+          {props.cloudConnected ? (
+            <p className="text-[11px] font-medium text-emerald-300 inline-flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+              <span>Cloud Live Sync Active</span>
+            </p>
+          ) : (
+            <button
+              type="button"
+              disabled={syncingCloud}
+              onClick={async () => {
+                setSyncingCloud(true);
+                try {
+                  await props.onConnectAdminCloud();
+                } finally {
+                  setSyncingCloud(false);
+                }
+              }}
+              className="w-full h-9 px-3 bg-emerald-600/90 hover:bg-emerald-600 rounded-lg text-xs font-semibold text-white inline-flex items-center justify-center gap-1.5"
+            >
+              <Globe className="w-3.5 h-3.5" />
+              <span>{syncingCloud ? 'Connecting...' : 'Sync Admin Cloud'}</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={props.onSignOut}
@@ -201,7 +228,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
                     key={item.id}
                     type="button"
                     onClick={() => {
-                      setSection(item.id);
+                      handleSelectSection(item.id);
                       setSidebarOpen(false);
                     }}
                     className={`w-full h-10 px-3 rounded-lg text-sm font-medium flex items-center gap-3 ${
@@ -296,7 +323,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
                   <div className="space-y-2 text-sm">
                     <button
                       type="button"
-                      onClick={() => setSection('users')}
+                      onClick={() => handleSelectSection('users')}
                       className="w-full px-4 py-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg flex items-center justify-between"
                     >
                       <span>Registration &amp; 200 RWF Activation Queue</span>
@@ -304,7 +331,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setSection('kyc')}
+                      onClick={() => handleSelectSection('kyc')}
                       className="w-full px-4 py-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg flex items-center justify-between"
                     >
                       <span>Rwanda KYC Verification Queue</span>
@@ -312,7 +339,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setSection('videos_tasks')}
+                      onClick={() => handleSelectSection('videos_tasks')}
                       className="w-full px-4 py-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg flex items-center justify-between"
                     >
                       <span>Videos, Tasks &amp; Requirement Proofs</span>
@@ -322,7 +349,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setSection('loans_withdrawals')}
+                      onClick={() => handleSelectSection('loans_withdrawals')}
                       className="w-full px-4 py-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg flex items-center justify-between"
                     >
                       <span>Investments, Loans &amp; Withdrawal Requests</span>
@@ -346,7 +373,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
                   </div>
                   <button
                     type="button"
-                    onClick={() => setSection('settings')}
+                    onClick={() => handleSelectSection('settings')}
                     className="mt-5 h-10 px-4 bg-white text-[#071B38] text-xs font-semibold rounded-lg w-fit"
                   >
                     Edit System Settings
@@ -1207,11 +1234,6 @@ export function AdminDashboard(props: AdminDashboardProps) {
                 </div>
               </form>
             </section>
-          )}
-
-          {/* 8. GitHub Host */}
-          {section === 'github' && (
-            <GitHubHostModule config={props.githubConfig} onSaveConfig={props.onSaveGitHubConfig} />
           )}
         </main>
       </div>

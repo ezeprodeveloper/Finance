@@ -77,10 +77,14 @@ export function UserVideosView({
     }
     try {
       const dataUrl = await readFileAsDataUrl(file, 4);
+      if (dataUrl.length > 485000) {
+        setError('Inline video file exceeds cloud sync limit (350 KB). Please paste a direct MP4/WebM video URL below for larger videos.');
+        return;
+      }
       setVideoUrl(dataUrl);
       setVideoFileName(file.name);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Video file must be under 4 MB or use a direct video URL.');
+      setError(err instanceof Error ? err.message : 'Video file must be under 350 KB or use a direct video URL.');
     }
   };
 

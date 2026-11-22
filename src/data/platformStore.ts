@@ -1,5 +1,4 @@
 import {
-  GitHubConfig,
   InvestmentPlanTier,
   PlatformStoreState,
   SystemSettings,
@@ -25,17 +24,6 @@ export const INVESTMENT_PLAN_TIERS: InvestmentPlanTier[] = [
   { id: 'plan-20000', name: 'Premier 20,000 Plan', depositRwf: 20000, dailyReturnRwf: 2200, durationDays: 60 },
 ];
 
-export function detectGitHubPagesRepo(): GitHubConfig | null {
-  if (typeof window === 'undefined') return null;
-  const { hostname, pathname } = window.location;
-  if (!hostname.endsWith('.github.io')) return null;
-
-  const owner = hostname.replace('.github.io', '').trim();
-  const pathSegments = pathname.split('/').filter(Boolean);
-  const repo = pathSegments[0] || `${owner}.github.io`;
-  if (!owner || !repo) return null;
-  return { owner, repo };
-}
 
 export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   activationFeeRwf: 200,
@@ -85,7 +73,6 @@ export const INITIAL_PLATFORM_STATE: PlatformStoreState = {
   ],
   settings: DEFAULT_SYSTEM_SETTINGS,
   session: { type: 'guest' },
-  githubConfig: detectGitHubPagesRepo(),
 };
 
 export function loadPlatformState(): PlatformStoreState {
@@ -102,7 +89,6 @@ export function loadPlatformState(): PlatformStoreState {
         ...(parsed.settings ?? {}),
       },
       session: parsed.session ?? { type: 'guest' },
-      githubConfig: parsed.githubConfig ?? detectGitHubPagesRepo(),
     };
   } catch {
     return INITIAL_PLATFORM_STATE;

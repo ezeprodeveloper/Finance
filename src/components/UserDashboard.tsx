@@ -8,7 +8,7 @@ import {
   Clock,
   Copy,
   Download,
-  GitBranch,
+  Globe,
   History,
   LayoutDashboard,
   Lock,
@@ -26,7 +26,6 @@ import {
 } from 'lucide-react';
 import {
   CustomTask,
-  GitHubConfig,
   InvestmentPlanTier,
   LoanRequest,
   RegisteredUser,
@@ -48,7 +47,6 @@ import {
   formatRwf,
 } from '../utils/formatters';
 import { ColorChangingClock } from './ColorChangingClock';
-import { GitHubHostModule } from './portal/GitHubHostModule';
 import { StatusLabel } from './StatusLabel';
 import { InvestmentPlansView } from './user/InvestmentPlansView';
 import { LuckySpinWheel } from './user/LuckySpinWheel';
@@ -73,7 +71,10 @@ interface UserDashboardProps {
   customTasks: CustomTask[];
   taskSubmissions: TaskSubmission[];
   transactions: TransactionRecord[];
-  githubConfig: GitHubConfig | null;
+  cloudConnected: boolean;
+  cloudNotice?: string | null;
+  onTriggerPageLoad: (label?: string) => void;
+  onConnectCloudAccount: () => Promise<void>;
   onSubmitActivationPayment: (phone: string, ref: string) => void;
   onDailyCheckIn: () => void;
   onSubmitKyc: (data: RwandaKycData) => void;
@@ -120,7 +121,6 @@ interface UserDashboardProps {
     targetCompletions: number;
     paymentRef: string;
   }) => void;
-  onSaveGitHubConfig: (next: GitHubConfig | null) => void;
   onSignOut: () => void;
 }
 
@@ -140,13 +140,19 @@ const NAV_ITEMS: Array<{
   { id: 'tasks', label: 'Paid Tasks', icon: ClipboardCheck },
   { id: 'transactions', label: 'History', icon: History },
   { id: 'profile', label: 'My Profile', icon: UserIcon },
-  { id: 'github', label: 'GitHub Host', icon: GitBranch },
 ];
 
 export function UserDashboard(props: UserDashboardProps) {
   const { user, settings } = props;
   const [section, setSection] = useState<UserPortalSection>('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [syncingCloud, setSyncingCloud] = useState(false);
+
+  const handleSelectSection = (next: UserPortalSection) => {
+    if (next === section) return;
+    props.onTriggerPageLoad('Loading section...');
+    setSection(next);
+  };
 
   // Activation payment state
   const [actPhone, setActPhone] = useState(user.phone);
@@ -447,7 +453,7 @@ export function UserDashboard(props: UserDashboardProps) {
               <button
                 key={item.id}
                 type="button"
-                onClick={() => setSection(item.id)}
+                onClick={() => handleSelectSection(item.id)}
                 className={`w-full h-10 px-3 rounded-lg text-sm font-medium flex items-center gap-3 transition-colors whitespace-nowrap ${
                   isActive
                     ? 'bg-white text-[#071B38] font-semibold'
@@ -477,6 +483,29 @@ export function UserDashboard(props: UserDashboardProps) {
               <p className="font-mono text-slate-300 truncate">{user.accountNumber}</p>
             </div>
           </div>
+          {props.cloudConnected ? (
+            <p className="text-[11px] font-medium text-emerald-300 inline-flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+              <span>Cloud Synced Across Devices</span>
+            </p>
+          ) : (
+            <button
+              type="button"
+              disabled={syncingCloud}
+              onClick={async () => {
+                setSyncingCloud(true);
+                try {
+                  await props.onConnectCloudAccount();
+                } finally {
+                  setSyncingCloud(false);
+                }
+              }}
+              className="w-full h-9 px-3 bg-emerald-600/90 hover:bg-emerald-600 rounded-lg text-xs font-semibold text-white inline-flex items-center justify-center gap-1.5"
+            >
+              <Globe className="w-3.5 h-3.5" />
+              <span>{syncingCloud ? 'Syncing...' : 'Sync Across Devices'}</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={props.onSignOut}
@@ -513,7 +542,7 @@ export function UserDashboard(props: UserDashboardProps) {
                     key={item.id}
                     type="button"
                     onClick={() => {
-                      setSection(item.id);
+                      handleSelectSection(item.id);
                       setSidebarOpen(false);
                     }}
                     className={`w-full h-10 px-3 rounded-lg text-sm font-medium flex items-center gap-3 ${
@@ -583,7 +612,7 @@ export function UserDashboard(props: UserDashboardProps) {
                   </p>
                   <button
                     type="button"
-                    onClick={() => setSection('savings')}
+                    onClick={() => handleSelectSection('savings')}
                     className="text-xs font-semibold text-blue-800 hover:underline mt-1"
                   >
                     Manage savings →
@@ -596,7 +625,7 @@ export function UserDashboard(props: UserDashboardProps) {
                   </p>
                   <button
                     type="button"
-                    onClick={() => setSection('spin')}
+                    onClick={() => handleSelectSection('spin')}
                     className="text-xs font-semibold text-blue-800 hover:underline mt-1"
                   >
                     {user.spinCredits} Lucky Spin{user.spinCredits === 1 ? '' : 's'} available →
@@ -627,7 +656,7 @@ export function UserDashboard(props: UserDashboardProps) {
                     {user.kycStatus !== 'approved' && (
                       <button
                         type="button"
-                        onClick={() => setSection('kyc')}
+                        onClick={() => handleSelectSection('kyc')}
                         className="text-xs font-semibold text-blue-800 hover:underline"
                       >
                         Verify →
@@ -683,7 +712,7 @@ export function UserDashboard(props: UserDashboardProps) {
                     <h2 className="text-base font-semibold text-slate-900">Recent activity</h2>
                     <button
                       type="button"
-                      onClick={() => setSection('transactions')}
+                      onClick={() => handleSelectSection('transactions')}
                       className="text-xs font-semibold text-blue-800 hover:underline"
                     >
                       View all →
@@ -746,7 +775,7 @@ export function UserDashboard(props: UserDashboardProps) {
             <UserSavingsView
               user={user}
               goals={userSavings}
-              onGoToKyc={() => setSection('kyc')}
+              onGoToKyc={() => handleSelectSection('kyc')}
               onCreateGoal={props.onCreateSavingsGoal}
               onDepositToSavings={props.onDepositToSavings}
               onWithdrawFromSavings={props.onWithdrawFromSavings}
@@ -767,7 +796,7 @@ export function UserDashboard(props: UserDashboardProps) {
               user={user}
               settings={settings}
               withdrawals={userWithdrawals}
-              onGoToKyc={() => setSection('kyc')}
+              onGoToKyc={() => handleSelectSection('kyc')}
               onRequestWithdrawal={props.onRequestWithdrawal}
             />
           )}
@@ -910,6 +939,12 @@ export function UserDashboard(props: UserDashboardProps) {
             </div>
           )}
 
+          {props.cloudNotice && (
+            <div className="mb-5 px-4 py-3 rounded-xl bg-blue-50 border border-blue-200 text-xs font-medium text-blue-900">
+              {props.cloudNotice}
+            </div>
+          )}
+
           {section === 'profile' && (
             <div className="bg-white/95 border border-slate-200 rounded-xl p-6 max-w-3xl space-y-6">
               <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-200">
@@ -971,10 +1006,6 @@ export function UserDashboard(props: UserDashboardProps) {
                 </div>
               </div>
             </div>
-          )}
-
-          {section === 'github' && (
-            <GitHubHostModule config={props.githubConfig} onSaveConfig={props.onSaveGitHubConfig} />
           )}
         </main>
       </div>

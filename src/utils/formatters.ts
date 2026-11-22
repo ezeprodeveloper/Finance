@@ -200,11 +200,42 @@ export function readFileAsDataUrl(file: File, maxSizeMb = 4): Promise<string> {
     }
     const reader = new FileReader();
     reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        resolve(reader.result);
-      } else {
+      if (typeof reader.result !== 'string') {
         reject(new Error('Could not read file.'));
+        return;
       }
+      const rawDataUrl = reader.result;
+      if (!file.type.startsWith('image/') || typeof Image === 'undefined') {
+        resolve(rawDataUrl);
+        return;
+      }
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 760;
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width >= height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(rawDataUrl);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        const compressed = canvas.toDataURL('image/jpeg', 0.78);
+        resolve(compressed.length < rawDataUrl.length ? compressed : rawDataUrl);
+      };
+      img.onerror = () => resolve(rawDataUrl);
+      img.src = rawDataUrl;
     };
     reader.onerror = () => reject(new Error('File reading failed.'));
     reader.readAsDataURL(file);

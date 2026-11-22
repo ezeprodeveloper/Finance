@@ -248,74 +248,6 @@ export interface SystemSettings {
   maintenanceMode: boolean;
 }
 
-export interface GitHubConfig {
-  owner: string;
-  repo: string;
-  token?: string;
-}
-
-export interface GitHubRepoSummary {
-  fullName: string;
-  description: string | null;
-  htmlUrl: string;
-  homepage: string | null;
-  defaultBranch: string;
-  visibility: string;
-  stars: number;
-  forks: number;
-  openIssues: number;
-  pushedAt: string;
-  hasPages: boolean;
-  licenseName: string | null;
-}
-
-export interface GitHubWorkflowRunSummary {
-  id: number;
-  name: string;
-  headBranch: string;
-  headSha: string;
-  status: string;
-  conclusion: string | null;
-  htmlUrl: string;
-  createdAt: string;
-  runNumber: number;
-}
-
-export interface GitHubReleaseAsset {
-  id: number;
-  name: string;
-  sizeBytes: number;
-  downloadCount: number;
-  browserDownloadUrl: string;
-}
-
-export interface GitHubReleaseSummary {
-  id: number;
-  tagName: string;
-  name: string;
-  publishedAt: string;
-  htmlUrl: string;
-  body: string;
-  assets: GitHubReleaseAsset[];
-}
-
-export interface GitHubCommitSummary {
-  sha: string;
-  message: string;
-  authorName: string;
-  date: string;
-  htmlUrl: string;
-}
-
-export interface GitHubHostBundle {
-  repo: GitHubRepoSummary;
-  runs: GitHubWorkflowRunSummary[];
-  releases: GitHubReleaseSummary[];
-  commits: GitHubCommitSummary[];
-  pagesUrl: string | null;
-  fetchedAt: string;
-}
-
 export type SessionRole =
   | { type: 'guest' }
   | { type: 'user'; userId: string }
@@ -332,8 +264,7 @@ export type UserPortalSection =
   | 'videos'
   | 'tasks'
   | 'transactions'
-  | 'profile'
-  | 'github';
+  | 'profile';
 
 export type AdminPortalSection =
   | 'dashboard'
@@ -342,8 +273,7 @@ export type AdminPortalSection =
   | 'videos_tasks'
   | 'loans_withdrawals'
   | 'promotions'
-  | 'settings'
-  | 'github';
+  | 'settings';
 
 export interface PlatformStoreState {
   users: RegisteredUser[];
@@ -359,5 +289,4 @@ export interface PlatformStoreState {
   promotions: AdminPromotion[];
   settings: SystemSettings;
   session: SessionRole;
-  githubConfig: GitHubConfig | null;
 }

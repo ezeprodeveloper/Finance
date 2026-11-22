@@ -2,7 +2,6 @@ import { useState } from 'react';
 import {
   ArrowRight,
   CheckCircle2,
-  GitBranch,
   Megaphone,
   Menu,
   ShieldCheck,
@@ -20,7 +19,6 @@ interface LandingViewProps {
   totalActiveTasks: number;
   onOpenLogin: () => void;
   onOpenRegister: () => void;
-  onOpenGitHubPublic: () => void;
 }
 
 export function LandingView({
@@ -30,7 +28,6 @@ export function LandingView({
   totalActiveTasks,
   onOpenLogin,
   onOpenRegister,
-  onOpenGitHubPublic,
 }: LandingViewProps) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
@@ -57,9 +54,6 @@ export function LandingView({
             </a>
             <a href="#how-it-works" className="hover:text-[#071B38] hover:underline underline-offset-4 whitespace-nowrap shrink-0">
               How It Works
-            </a>
-            <a href="#github-host" className="hover:text-[#071B38] hover:underline underline-offset-4 whitespace-nowrap shrink-0">
-              GitHub Host
             </a>
           </nav>
 
@@ -93,9 +87,6 @@ export function LandingView({
               </a>
               <a href="#how-it-works" onClick={() => setMobileNavOpen(false)} className="py-2 px-2 rounded-md hover:bg-slate-50">
                 How It Works
-              </a>
-              <a href="#github-host" onClick={() => setMobileNavOpen(false)} className="py-2 px-2 rounded-md hover:bg-slate-50">
-                GitHub Host
               </a>
             </nav>
             <button
@@ -152,7 +143,7 @@ export function LandingView({
                 <span aria-hidden="true">·</span>
                 <span>MTN Mobile Money &amp; Airtel Money</span>
                 <span aria-hidden="true">·</span>
-                <span>Full RWF Transaction History</span>
+                <span>Cross-Device Cloud Account Sync</span>
               </div>
             </div>
 
@@ -287,7 +278,7 @@ export function LandingView({
         </section>
 
         {/* How It Works */}
-        <section id="how-it-works" className="max-w-[1200px] mx-auto px-4 sm:px-6 pb-14">
+        <section id="how-it-works" className="max-w-[1200px] mx-auto px-4 sm:px-6 pb-16">
           <div className="bg-white/95 border border-slate-200 rounded-2xl p-6 sm:p-8">
             <h2 className="font-display text-2xl font-bold text-[#071B38] mb-6">
               Account onboarding &amp; verification lifecycle
@@ -324,29 +315,6 @@ export function LandingView({
             </div>
           </div>
         </section>
-
-        {/* GitHub Host Section */}
-        <section id="github-host" className="max-w-[1200px] mx-auto px-4 sm:px-6 pb-16">
-          <div className="bg-shifting-aurora text-white rounded-2xl p-6 sm:p-8 flex flex-col md:flex-row md:items-center justify-between gap-6 border border-slate-800">
-            <div className="max-w-2xl">
-              <p className="text-xs font-semibold text-emerald-300">GitHub Pages &amp; Repository Host</p>
-              <h2 className="font-display text-2xl font-bold mt-1">
-                Deploy and monitor E-Finance directly from your GitHub host
-              </h2>
-              <p className="text-sm text-slate-200 mt-2 leading-relaxed">
-                Includes an automated GitHub Actions Pages workflow (.github/workflows/deploy.yml) and live GitHub API repository inspector for commits, CI runs, and Android APK releases.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={onOpenGitHubPublic}
-              className="h-11 px-5 bg-white text-[#071B38] hover:bg-slate-100 text-sm font-semibold rounded-lg inline-flex items-center gap-2 shrink-0 whitespace-nowrap"
-            >
-              <GitBranch className="w-4 h-4" />
-              <span>Inspect GitHub Host</span>
-            </button>
-          </div>
-        </section>
       </main>
 
       <footer className="bg-white/95 border-t border-slate-200">
@@ -362,9 +330,6 @@ export function LandingView({
             </button>
             <button type="button" onClick={onOpenLogin} className="hover:text-slate-950">
               Sign In
-            </button>
-            <button type="button" onClick={onOpenGitHubPublic} className="hover:text-slate-950">
-              GitHub Host
             </button>
           </div>
         </div>

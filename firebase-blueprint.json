@@ -1,0 +1,414 @@
+{
+  "entities": {
+    "PlatformSettings": {
+      "title": "PlatformSettings",
+      "description": "Global platform financial parameters and configuration managed by Admin.",
+      "type": "object",
+      "properties": {
+        "activationFeeRwf": { "type": "number", "description": "One-time activation fee in RWF" },
+        "welcomeBonusRwf": { "type": "number", "description": "Welcome bonus credited on activation" },
+        "dailyCheckInRwf": { "type": "number", "description": "Daily 24-hour check-in reward" },
+        "withdrawalFeePercent": { "type": "number", "description": "First bonus withdrawal deduction percentage" },
+        "subsequentMinWithdrawalRwf": { "type": "number", "description": "Minimum subsequent withdrawal amount in RWF" },
+        "subsequentMaxWithdrawalRwf": { "type": "number", "description": "Maximum subsequent withdrawal amount in RWF" },
+        "referralCommissionPercent": { "type": "number", "description": "Commission percent on referred plan deposits" },
+        "minVideoRewardRwf": { "type": "number", "description": "Minimum reward per video view in RWF" },
+        "momoPayCode": { "type": "string", "minLength": 3, "maxLength": 32, "pattern": "^[0-9A-Za-z*#]+$" },
+        "platformTagline": { "type": "string", "minLength": 5, "maxLength": 300 },
+        "maintenanceMode": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "activationFeeRwf",
+        "welcomeBonusRwf",
+        "dailyCheckInRwf",
+        "withdrawalFeePercent",
+        "subsequentMinWithdrawalRwf",
+        "subsequentMaxWithdrawalRwf",
+        "referralCommissionPercent",
+        "minVideoRewardRwf",
+        "momoPayCode",
+        "platformTagline",
+        "maintenanceMode"
+      ]
+    },
+    "AdminPromotion": {
+      "title": "AdminPromotion",
+      "description": "Public announcement or promotional banner displayed on the landing page.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 2, "maxLength": 180 },
+        "summary": { "type": "string", "minLength": 5, "maxLength": 1500 },
+        "category": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "summary", "category", "active", "createdAt"]
+    },
+    "RegisteredUser": {
+      "title": "RegisteredUser",
+      "description": "E-Finance member profile containing Rwanda identity, balances, and KYC status.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "firstName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "secondName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "email": { "type": "string", "format": "email", "maxLength": 160 },
+        "phone": { "type": "string", "minLength": 9, "maxLength": 24 },
+        "gender": { "type": "string", "enum": ["Male", "Female", "Other"] },
+        "dateOfBirth": { "type": "string", "maxLength": 32 },
+        "idNumber": { "type": "string", "minLength": 16, "maxLength": 16, "pattern": "^\\d{16}$" },
+        "photoDataUrl": { "type": "string", "maxLength": 450000 },
+        "education": { "type": "object" },
+        "residence": { "type": "object" },
+        "passwordHash": { "type": "string", "maxLength": 128 },
+        "accountNumber": { "type": "string", "minLength": 5, "maxLength": 32 },
+        "referralCode": { "type": "string", "minLength": 3, "maxLength": 32 },
+        "referredByUserId": { "type": "string", "maxLength": 128 },
+        "spinCredits": { "type": "number" },
+        "hasCompletedFirstWithdrawal": { "type": "boolean" },
+        "accountStatus": {
+          "type": "string",
+          "enum": ["pending_approval", "awaiting_payment", "payment_submitted", "active", "suspended"]
+        },
+        "activationPaymentRef": { "type": "string", "maxLength": 120 },
+        "activationPaidPhone": { "type": "string", "maxLength": 24 },
+        "walletBalanceRwf": { "type": "number" },
+        "bonusBalanceRwf": { "type": "number" },
+        "savingsBalanceRwf": { "type": "number" },
+        "lastCheckInAt": { "type": "string", "maxLength": 64 },
+        "checkInStreak": { "type": "number" },
+        "kycStatus": { "type": "string", "enum": ["not_submitted", "pending", "approved", "rejected"] },
+        "kycData": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "firstName",
+        "secondName",
+        "email",
+        "phone",
+        "gender",
+        "dateOfBirth",
+        "idNumber",
+        "photoDataUrl",
+        "education",
+        "residence",
+        "accountNumber",
+        "referralCode",
+        "spinCredits",
+        "hasCompletedFirstWithdrawal",
+        "accountStatus",
+        "walletBalanceRwf",
+        "bonusBalanceRwf",
+        "savingsBalanceRwf",
+        "checkInStreak",
+        "kycStatus",
+        "createdAt"
+      ]
+    },
+    "SavingsGoal": {
+      "title": "SavingsGoal",
+      "description": "Member RWF savings vault goal.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "planType": { "type": "string", "enum": ["Flexible", "Goal-Based", "Long-Term"] },
+        "targetRwf": { "type": "number" },
+        "currentRwf": { "type": "number" },
+        "targetDate": { "type": "string", "maxLength": 32 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "title", "planType", "targetRwf", "currentRwf", "targetDate", "createdAt"]
+    },
+    "LoanRequest": {
+      "title": "LoanRequest",
+      "description": "Member micro-loan request and repayment record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "product": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "reason": { "type": "string", "minLength": 2, "maxLength": 300 },
+        "principalRwf": { "type": "number" },
+        "termMonths": { "type": "number" },
+        "annualRatePercent": { "type": "number" },
+        "monthlyPaymentRwf": { "type": "number" },
+        "totalRepayableRwf": { "type": "number" },
+        "repaidRwf": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending_admin", "approved", "repaid", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "userId",
+        "userName",
+        "product",
+        "reason",
+        "principalRwf",
+        "termMonths",
+        "annualRatePercent",
+        "monthlyPaymentRwf",
+        "totalRepayableRwf",
+        "repaidRwf",
+        "status",
+        "createdAt"
+      ]
+    },
+    "UserInvestment": {
+      "title": "UserInvestment",
+      "description": "Member daily return investment subscription.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "tierId": { "type": "string", "minLength": 2, "maxLength": 48 },
+        "planName": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "depositRwf": { "type": "number" },
+        "dailyReturnRwf": { "type": "number" },
+        "paymentCode": { "type": "string", "minLength": 3, "maxLength": 80 },
+        "paymentRef": { "type": "string", "minLength": 3, "maxLength": 120 },
+        "status": { "type": "string", "enum": ["pending_admin", "active", "completed", "rejected"] },
+        "totalEarnedRwf": { "type": "number" },
+        "lastRoiCreditedAt": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "userId",
+        "userName",
+        "tierId",
+        "planName",
+        "depositRwf",
+        "dailyReturnRwf",
+        "paymentCode",
+        "paymentRef",
+        "status",
+        "totalEarnedRwf",
+        "createdAt"
+      ]
+    },
+    "SpinHistoryRecord": {
+      "title": "SpinHistoryRecord",
+      "description": "Lucky Spin Wheel reward entry.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "rewardRwf": { "type": "number" },
+        "spunAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "rewardRwf", "spunAt"]
+    },
+    "WithdrawalRequest": {
+      "title": "WithdrawalRequest",
+      "description": "Mobile money withdrawal request.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "network": { "type": "string", "enum": ["MTN Rwanda", "Airtel / Tigo Rwanda"] },
+        "destinationType": { "type": "string", "enum": ["Phone Number", "MoMo Pay Code"] },
+        "destinationValue": { "type": "string", "minLength": 3, "maxLength": 64 },
+        "accountRegisteredNames": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "grossAmountRwf": { "type": "number" },
+        "feePercent": { "type": "number" },
+        "feeRwf": { "type": "number" },
+        "netAmountRwf": { "type": "number" },
+        "isFirstBonusWithdrawal": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["pending_admin", "paid", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "userId",
+        "userName",
+        "network",
+        "destinationType",
+        "destinationValue",
+        "accountRegisteredNames",
+        "grossAmountRwf",
+        "feePercent",
+        "feeRwf",
+        "netAmountRwf",
+        "isFirstBonusWithdrawal",
+        "status",
+        "createdAt"
+      ]
+    },
+    "ShortVideoCampaign": {
+      "title": "ShortVideoCampaign",
+      "description": "Short promotional video campaign funded by a member.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "creatorId": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "creatorName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "title": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "videoUrl": { "type": "string", "minLength": 5, "maxLength": 500000 },
+        "rewardPerViewRwf": { "type": "number" },
+        "targetViewers": { "type": "number" },
+        "totalBudgetRwf": { "type": "number" },
+        "paymentCode": { "type": "string", "minLength": 3, "maxLength": 80 },
+        "paymentRef": { "type": "string", "minLength": 3, "maxLength": 120 },
+        "watchedByUserIds": { "type": "array" },
+        "status": { "type": "string", "enum": ["pending_admin", "active", "completed", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "creatorId",
+        "creatorName",
+        "title",
+        "description",
+        "videoUrl",
+        "rewardPerViewRwf",
+        "targetViewers",
+        "totalBudgetRwf",
+        "paymentCode",
+        "paymentRef",
+        "watchedByUserIds",
+        "status",
+        "createdAt"
+      ]
+    },
+    "CustomTask": {
+      "title": "CustomTask",
+      "description": "Creator-funded community task with explicit verification requirements.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "creatorId": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "creatorName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "title": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "requirements": { "type": "string", "minLength": 3, "maxLength": 2000 },
+        "rewardPerCompletionRwf": { "type": "number" },
+        "targetCompletions": { "type": "number" },
+        "totalBudgetRwf": { "type": "number" },
+        "paymentCode": { "type": "string", "minLength": 3, "maxLength": 80 },
+        "paymentRef": { "type": "string", "minLength": 3, "maxLength": 120 },
+        "approvedWorkerIds": { "type": "array" },
+        "status": { "type": "string", "enum": ["pending_admin", "active", "completed", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "creatorId",
+        "creatorName",
+        "title",
+        "requirements",
+        "rewardPerCompletionRwf",
+        "targetCompletions",
+        "totalBudgetRwf",
+        "paymentCode",
+        "paymentRef",
+        "approvedWorkerIds",
+        "status",
+        "createdAt"
+      ]
+    },
+    "TaskSubmission": {
+      "title": "TaskSubmission",
+      "description": "Worker proof submission for a custom task.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "taskId": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "taskTitle": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "workerId": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workerName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "proofText": { "type": "string", "minLength": 2, "maxLength": 2000 },
+        "proofUrl": { "type": "string", "maxLength": 500 },
+        "rewardRwf": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending_admin", "approved", "rejected"] },
+        "adminNote": { "type": "string", "maxLength": 300 },
+        "submittedAt": { "type": "string", "format": "date-time" },
+        "reviewedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "taskId", "taskTitle", "workerId", "workerName", "proofText", "rewardRwf", "status", "submittedAt"]
+    },
+    "TransactionRecord": {
+      "title": "TransactionRecord",
+      "description": "Financial ledger entry for a user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "reference": { "type": "string", "minLength": 3, "maxLength": 48 },
+        "title": { "type": "string", "minLength": 2, "maxLength": 200 },
+        "category": { "type": "string", "minLength": 2, "maxLength": 48 },
+        "channel": { "type": "string", "minLength": 2, "maxLength": 200 },
+        "amountRwf": { "type": "number" },
+        "feeRwf": { "type": "number" },
+        "direction": { "type": "string", "enum": ["credit", "debit"] },
+        "status": { "type": "string", "enum": ["Completed", "Pending Review", "Rejected"] },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "reference", "title", "category", "channel", "amountRwf", "direction", "status", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/PlatformSettings" },
+      "description": "Global platform configuration settings document (`platform`)."
+    },
+    "/promotions/{promoId}": {
+      "schema": { "$ref": "#/entities/AdminPromotion" },
+      "description": "Public landing page promotions and announcements published by Admin."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/RegisteredUser" },
+      "description": "Member profiles keyed by Firebase Auth UID with isolated PII and balance controls."
+    },
+    "/savingsGoals/{goalId}": {
+      "schema": { "$ref": "#/entities/SavingsGoal" },
+      "description": "Member savings vaults."
+    },
+    "/loans/{loanId}": {
+      "schema": { "$ref": "#/entities/LoanRequest" },
+      "description": "Member micro-loan requests and repayments."
+    },
+    "/investments/{investmentId}": {
+      "schema": { "$ref": "#/entities/UserInvestment" },
+      "description": "Member daily return investment subscriptions."
+    },
+    "/spinHistory/{spinId}": {
+      "schema": { "$ref": "#/entities/SpinHistoryRecord" },
+      "description": "Lucky Spin Wheel claim logs."
+    },
+    "/withdrawals/{withdrawalId}": {
+      "schema": { "$ref": "#/entities/WithdrawalRequest" },
+      "description": "Mobile Money withdrawal requests."
+    },
+    "/videoCampaigns/{campaignId}": {
+      "schema": { "$ref": "#/entities/ShortVideoCampaign" },
+      "description": "Paid short video campaigns."
+    },
+    "/customTasks/{taskId}": {
+      "schema": { "$ref": "#/entities/CustomTask" },
+      "description": "Creator-funded custom tasks."
+    },
+    "/taskSubmissions/{submissionId}": {
+      "schema": { "$ref": "#/entities/TaskSubmission" },
+      "description": "Worker task proof submissions."
+    },
+    "/transactions/{txId}": {
+      "schema": { "$ref": "#/entities/TransactionRecord" },
+      "description": "Member transaction ledger entries."
+    }
+  }
+}

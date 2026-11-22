@@ -93,13 +93,59 @@
   animation: efinance-clock-colors 10s linear infinite;
 }
 
+@keyframes efinance-splash-float {
+  0%, 100% {
+    transform: translateY(0px) scale(1);
+  }
+  50% {
+    transform: translateY(-6px) scale(1.03);
+  }
+}
+
+@keyframes efinance-progress-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(220%);
+  }
+}
+
+.splash-logo-float {
+  animation: efinance-splash-float 2.4s ease-in-out infinite;
+}
+
+.splash-word-colors {
+  background: linear-gradient(
+    90deg,
+    #ffffff 0%,
+    #38bdf8 25%,
+    #34d399 50%,
+    #fbbf24 75%,
+    #ffffff 100%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: efinance-gradient-shift 4s ease infinite;
+}
+
+.splash-progress-bar {
+  background: linear-gradient(90deg, #38bdf8, #34d399, #fbbf24);
+  animation: efinance-progress-sweep 1.3s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
   }
   .bg-shifting-aurora,
   .bg-shifting-soft,
-  .clock-color-cycle {
+  .clock-color-cycle,
+  .splash-logo-float,
+  .splash-word-colors,
+  .splash-progress-bar {
     animation: none;
   }
 }
