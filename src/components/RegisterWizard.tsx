@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, ArrowRight, CheckCircle2, Globe, Lock, Upload, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CheckCircle2, Lock, Upload, X } from 'lucide-react';
 import {
   EducationType,
   Gender,
   RegisteredUser,
 } from '../types/finance';
-import { sanitizeDocId } from '../services/firestoreStore';
 import {
   generateAccountNumber,
   generateReferralCode,
@@ -16,28 +15,17 @@ import {
 } from '../utils/formatters';
 import { RwandaLocationSelector } from './RwandaLocationSelector';
 
-export interface FirebaseRegistrationPrefill {
-  uid: string;
-  email: string;
-  firstName: string;
-  secondName: string;
-}
-
 interface RegisterWizardProps {
   isOpen: boolean;
   existingUsers: RegisteredUser[];
-  firebasePrefill?: FirebaseRegistrationPrefill | null;
-  onLinkGoogle?: () => Promise<void>;
   onClose: () => void;
-  onComplete: (newUser: RegisteredUser) => void;
+  onComplete: (newUser: RegisteredUser, rawPassword: string) => Promise<string | null>;
   onSwitchToLogin: () => void;
 }
 
 export function RegisterWizard({
   isOpen,
   existingUsers,
-  firebasePrefill,
-  onLinkGoogle,
   onClose,
   onComplete,
   onSwitchToLogin,
@@ -45,7 +33,6 @@ export function RegisterWizard({
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [linkingCloud, setLinkingCloud] = useState(false);
 
   // Step 1: Personal Identification
   const [firstName, setFirstName] = useState('');
@@ -73,13 +60,6 @@ export function RegisterWizard({
   const [referralCodeInput, setReferralCodeInput] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-
-  useEffect(() => {
-    if (!firebasePrefill) return;
-    setEmail((prev) => prev || firebasePrefill.email);
-    setFirstName((prev) => prev || firebasePrefill.firstName);
-    setSecondName((prev) => prev || firebasePrefill.secondName);
-  }, [firebasePrefill]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -205,7 +185,7 @@ export function RegisterWizard({
     try {
       const passwordHash = await hashPassword(password);
       const newUser: RegisteredUser = {
-        id: firebasePrefill ? sanitizeDocId(firebasePrefill.uid) : `usr-${Date.now()}`,
+        id: `usr-${Date.now()}`,
         firstName: firstName.trim(),
         secondName: secondName.trim(),
         email: email.trim().toLowerCase(),
@@ -242,7 +222,10 @@ export function RegisterWizard({
         kycStatus: 'not_submitted',
         createdAt: new Date().toISOString(),
       };
-      onComplete(newUser);
+      const regError = await onComplete(newUser, password);
+      if (regError) {
+        setError(regError);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -265,7 +248,7 @@ export function RegisterWizard({
           <X className="w-5 h-5" />
         </button>
 
-        <div className="mb-5">
+        <div className="mb-6">
           <p className="text-xs font-semibold text-blue-800">E-Finance Rwanda Registration · Step {step} of 3</p>
           <h2 id="reg-title" className="font-display text-2xl font-bold text-[#071B38] mt-1">
             {step === 1 && 'Step 1: Personal Identification'}
@@ -275,45 +258,6 @@ export function RegisterWizard({
           <p className="text-xs text-slate-600 mt-1">
             After submitting, E-Finance reviews your registration before you activate your account.
           </p>
-        </div>
-
-        {/* Cross-Device Cloud Account Banner */}
-        <div className="mb-5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-          {firebasePrefill ? (
-            <div className="flex items-center gap-2 text-xs text-emerald-800 font-medium">
-              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-700" />
-              <span>
-                Cross-device Cloud Sync linked ({firebasePrefill.email}). Your account will sync across any phone or computer.
-              </span>
-            </div>
-          ) : (
-            <>
-              <div className="text-xs text-slate-700">
-                <span className="font-semibold text-slate-900">Access on any device:</span> Link Google so your E-Finance balance and history sync everywhere.
-              </div>
-              {onLinkGoogle && (
-                <button
-                  type="button"
-                  disabled={linkingCloud}
-                  onClick={async () => {
-                    setError(null);
-                    setLinkingCloud(true);
-                    try {
-                      await onLinkGoogle();
-                    } catch (err) {
-                      setError(err instanceof Error ? err.message : 'Unable to link Google account.');
-                    } finally {
-                      setLinkingCloud(false);
-                    }
-                  }}
-                  className="h-9 px-3 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 inline-flex items-center gap-1.5 shrink-0"
-                >
-                  <Globe className="w-3.5 h-3.5 text-blue-700" />
-                  <span>{linkingCloud ? 'Linking...' : 'Link Google Sync'}</span>
-                </button>
-              )}
-            </>
-          )}
         </div>
 
         {/* Step Progress Bar */}

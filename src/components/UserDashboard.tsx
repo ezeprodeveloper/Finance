@@ -8,7 +8,6 @@ import {
   Clock,
   Copy,
   Download,
-  Globe,
   History,
   LayoutDashboard,
   Lock,
@@ -71,10 +70,6 @@ interface UserDashboardProps {
   customTasks: CustomTask[];
   taskSubmissions: TaskSubmission[];
   transactions: TransactionRecord[];
-  cloudConnected: boolean;
-  cloudNotice?: string | null;
-  onTriggerPageLoad: (label?: string) => void;
-  onConnectCloudAccount: () => Promise<void>;
   onSubmitActivationPayment: (phone: string, ref: string) => void;
   onDailyCheckIn: () => void;
   onSubmitKyc: (data: RwandaKycData) => void;
@@ -146,11 +141,9 @@ export function UserDashboard(props: UserDashboardProps) {
   const { user, settings } = props;
   const [section, setSection] = useState<UserPortalSection>('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [syncingCloud, setSyncingCloud] = useState(false);
 
   const handleSelectSection = (next: UserPortalSection) => {
     if (next === section) return;
-    props.onTriggerPageLoad('Loading section...');
     setSection(next);
   };
 
@@ -483,29 +476,6 @@ export function UserDashboard(props: UserDashboardProps) {
               <p className="font-mono text-slate-300 truncate">{user.accountNumber}</p>
             </div>
           </div>
-          {props.cloudConnected ? (
-            <p className="text-[11px] font-medium text-emerald-300 inline-flex items-center gap-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-              <span>Cloud Synced Across Devices</span>
-            </p>
-          ) : (
-            <button
-              type="button"
-              disabled={syncingCloud}
-              onClick={async () => {
-                setSyncingCloud(true);
-                try {
-                  await props.onConnectCloudAccount();
-                } finally {
-                  setSyncingCloud(false);
-                }
-              }}
-              className="w-full h-9 px-3 bg-emerald-600/90 hover:bg-emerald-600 rounded-lg text-xs font-semibold text-white inline-flex items-center justify-center gap-1.5"
-            >
-              <Globe className="w-3.5 h-3.5" />
-              <span>{syncingCloud ? 'Syncing...' : 'Sync Across Devices'}</span>
-            </button>
-          )}
           <button
             type="button"
             onClick={props.onSignOut}
@@ -936,12 +906,6 @@ export function UserDashboard(props: UserDashboardProps) {
                   </div>
                 )}
               </div>
-            </div>
-          )}
-
-          {props.cloudNotice && (
-            <div className="mb-5 px-4 py-3 rounded-xl bg-blue-50 border border-blue-200 text-xs font-medium text-blue-900">
-              {props.cloudNotice}
             </div>
           )}
 

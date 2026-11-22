@@ -40,7 +40,7 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAdminEmail() || (
-        isVerifiedUser() &&
+        isSignedIn() &&
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
     }
@@ -361,7 +361,7 @@ service cloud.firestore {
     }
 
     match /admins/{adminId} {
-      allow get: if isVerifiedUser() && isValidId(adminId) && (request.auth.uid == adminId || isAdminEmail());
+      allow get: if isSignedIn() && isValidId(adminId) && (request.auth.uid == adminId || isAdminEmail());
       allow list, write: if false;
     }
 
@@ -382,10 +382,10 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow get: if isVerifiedUser() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
-      allow list: if isVerifiedUser() && (existing().id == request.auth.uid || isAdminEmail());
-      allow create: if isVerifiedUser() && isValidId(userId) && request.auth.uid == userId && isValidUserCreate(incoming(), userId);
-      allow update: if isVerifiedUser() && isValidId(userId) && isValidUserPayload(incoming()) &&
+      allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+      allow list: if isSignedIn() && (existing().id == request.auth.uid || isAdminEmail());
+      allow create: if isSignedIn() && isValidId(userId) && request.auth.uid == userId && isValidUserCreate(incoming(), userId);
+      allow update: if isSignedIn() && isValidId(userId) && isValidUserPayload(incoming()) &&
         incoming().id == existing().id && incoming().createdAt == existing().createdAt && (
           isAdmin() || (
             request.auth.uid == userId &&
@@ -434,11 +434,11 @@ service cloud.firestore {
     }
 
     match /savingsGoals/{goalId} {
-      allow get: if isVerifiedUser() && isValidId(goalId) && (existing().userId == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() && (existing().userId == request.auth.uid || isAdminEmail());
-      allow create: if isVerifiedUser() && isValidId(goalId) && isValidSavingsGoal(incoming()) &&
+      allow get: if isSignedIn() && isValidId(goalId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdminEmail());
+      allow create: if isSignedIn() && isValidId(goalId) && isValidSavingsGoal(incoming()) &&
         incoming().userId == request.auth.uid && incoming().currentRwf == 0;
-      allow update: if isVerifiedUser() && isValidId(goalId) && isValidSavingsGoal(incoming()) &&
+      allow update: if isSignedIn() && isValidId(goalId) && isValidSavingsGoal(incoming()) &&
         incoming().id == existing().id && incoming().userId == existing().userId && (
           isAdmin() ||
           (existing().userId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['currentRwf', 'updatedAt']))
@@ -447,11 +447,11 @@ service cloud.firestore {
     }
 
     match /loans/{loanId} {
-      allow get: if isVerifiedUser() && isValidId(loanId) && (existing().userId == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() && (existing().userId == request.auth.uid || isAdminEmail());
-      allow create: if isVerifiedUser() && isValidId(loanId) && isValidLoan(incoming()) &&
+      allow get: if isSignedIn() && isValidId(loanId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdminEmail());
+      allow create: if isSignedIn() && isValidId(loanId) && isValidLoan(incoming()) &&
         incoming().userId == request.auth.uid && incoming().status == 'pending_admin' && incoming().repaidRwf == 0;
-      allow update: if isVerifiedUser() && isValidId(loanId) && isValidLoan(incoming()) &&
+      allow update: if isSignedIn() && isValidId(loanId) && isValidLoan(incoming()) &&
         incoming().id == existing().id && incoming().userId == existing().userId && (
           isAdmin() ||
           (existing().userId == request.auth.uid &&
@@ -464,11 +464,11 @@ service cloud.firestore {
     }
 
     match /investments/{investmentId} {
-      allow get: if isVerifiedUser() && isValidId(investmentId) && (existing().userId == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() && (existing().userId == request.auth.uid || isAdminEmail());
-      allow create: if isVerifiedUser() && isValidId(investmentId) && isValidInvestment(incoming()) &&
+      allow get: if isSignedIn() && isValidId(investmentId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdminEmail());
+      allow create: if isSignedIn() && isValidId(investmentId) && isValidInvestment(incoming()) &&
         incoming().userId == request.auth.uid && incoming().status == 'pending_admin' && incoming().totalEarnedRwf == 0;
-      allow update: if isVerifiedUser() && isValidId(investmentId) && isValidInvestment(incoming()) &&
+      allow update: if isSignedIn() && isValidId(investmentId) && isValidInvestment(incoming()) &&
         incoming().id == existing().id && incoming().userId == existing().userId && (
           isAdmin() ||
           (existing().userId == request.auth.uid &&
@@ -481,16 +481,16 @@ service cloud.firestore {
     }
 
     match /spinHistory/{spinId} {
-      allow get: if isVerifiedUser() && isValidId(spinId) && (existing().userId == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() && (existing().userId == request.auth.uid || isAdminEmail());
-      allow create: if isVerifiedUser() && isValidId(spinId) && isValidSpin(incoming()) && incoming().userId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(spinId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdminEmail());
+      allow create: if isSignedIn() && isValidId(spinId) && isValidSpin(incoming()) && incoming().userId == request.auth.uid;
       allow update, delete: if false;
     }
 
     match /withdrawals/{withdrawalId} {
-      allow get: if isVerifiedUser() && isValidId(withdrawalId) && (existing().userId == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() && (existing().userId == request.auth.uid || isAdminEmail());
-      allow create: if isVerifiedUser() && isValidId(withdrawalId) && isValidWithdrawal(incoming()) &&
+      allow get: if isSignedIn() && isValidId(withdrawalId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdminEmail());
+      allow create: if isSignedIn() && isValidId(withdrawalId) && isValidWithdrawal(incoming()) &&
         incoming().userId == request.auth.uid && incoming().status == 'pending_admin';
       allow update: if isAdmin() && isValidId(withdrawalId) && isValidWithdrawal(incoming()) &&
         incoming().id == existing().id && incoming().userId == existing().userId;
@@ -498,17 +498,17 @@ service cloud.firestore {
     }
 
     match /videoCampaigns/{campaignId} {
-      allow get: if isVerifiedUser() && isValidId(campaignId) && (
+      allow get: if isSignedIn() && isValidId(campaignId) && (
         existing().status == 'active' || existing().creatorId == request.auth.uid || isAdmin()
       );
-      allow list: if isVerifiedUser() && (
+      allow list: if isSignedIn() && (
         existing().status == 'active' || existing().creatorId == request.auth.uid || isAdminEmail()
       );
-      allow create: if isVerifiedUser() && isValidId(campaignId) && isValidVideoCampaign(incoming()) &&
+      allow create: if isSignedIn() && isValidId(campaignId) && isValidVideoCampaign(incoming()) &&
         incoming().creatorId == request.auth.uid &&
         incoming().status == 'pending_admin' &&
         incoming().watchedByUserIds.size() == 0;
-      allow update: if isVerifiedUser() && isValidId(campaignId) && isValidVideoCampaign(incoming()) &&
+      allow update: if isSignedIn() && isValidId(campaignId) && isValidVideoCampaign(incoming()) &&
         incoming().id == existing().id && incoming().creatorId == existing().creatorId && (
           isAdmin() ||
           (existing().status == 'active' &&
@@ -522,13 +522,13 @@ service cloud.firestore {
     }
 
     match /customTasks/{taskId} {
-      allow get: if isVerifiedUser() && isValidId(taskId) && (
+      allow get: if isSignedIn() && isValidId(taskId) && (
         existing().status == 'active' || existing().creatorId == request.auth.uid || isAdmin()
       );
-      allow list: if isVerifiedUser() && (
+      allow list: if isSignedIn() && (
         existing().status == 'active' || existing().creatorId == request.auth.uid || isAdminEmail()
       );
-      allow create: if isVerifiedUser() && isValidId(taskId) && isValidCustomTask(incoming()) &&
+      allow create: if isSignedIn() && isValidId(taskId) && isValidCustomTask(incoming()) &&
         incoming().creatorId == request.auth.uid &&
         incoming().status == 'pending_admin' &&
         incoming().approvedWorkerIds.size() == 0;
@@ -538,9 +538,9 @@ service cloud.firestore {
     }
 
     match /taskSubmissions/{submissionId} {
-      allow get: if isVerifiedUser() && isValidId(submissionId) && (existing().workerId == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() && (existing().workerId == request.auth.uid || isAdminEmail());
-      allow create: if isVerifiedUser() && isValidId(submissionId) && isValidTaskSubmission(incoming()) &&
+      allow get: if isSignedIn() && isValidId(submissionId) && (existing().workerId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().workerId == request.auth.uid || isAdminEmail());
+      allow create: if isSignedIn() && isValidId(submissionId) && isValidTaskSubmission(incoming()) &&
         incoming().workerId == request.auth.uid &&
         incoming().status == 'pending_admin' &&
         exists(/databases/$(database)/documents/customTasks/$(incoming().taskId));
@@ -550,9 +550,9 @@ service cloud.firestore {
     }
 
     match /transactions/{txId} {
-      allow get: if isVerifiedUser() && isValidId(txId) && (existing().userId == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() && (existing().userId == request.auth.uid || isAdminEmail());
-      allow create: if isVerifiedUser() && isValidId(txId) && isValidTransaction(incoming()) && (
+      allow get: if isSignedIn() && isValidId(txId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdminEmail());
+      allow create: if isSignedIn() && isValidId(txId) && isValidTransaction(incoming()) && (
         isAdmin() || incoming().userId == request.auth.uid
       );
       allow update: if isAdmin() && isValidId(txId) && isValidTransaction(incoming()) &&

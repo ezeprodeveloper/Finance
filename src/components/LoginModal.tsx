@@ -1,33 +1,23 @@
 import React, { useState } from 'react';
-import { ArrowRight, Globe, X } from 'lucide-react';
-import { ADMIN_EMAIL, ADMIN_PASSWORD_SHA256 } from '../data/platformStore';
-import { RegisteredUser } from '../types/finance';
-import { hashPassword } from '../utils/formatters';
+import { ArrowRight, X } from 'lucide-react';
 
 interface LoginModalProps {
   isOpen: boolean;
-  users: RegisteredUser[];
   onClose: () => void;
-  onLoginUser: (userId: string) => void;
-  onLoginAdmin: () => void;
-  onGoogleSignIn: () => Promise<void>;
+  onAuthenticate: (identifier: string, password: string) => Promise<string | null>;
   onSwitchToRegister: () => void;
 }
 
 export function LoginModal({
   isOpen,
-  users,
   onClose,
-  onLoginUser,
-  onLoginAdmin,
-  onGoogleSignIn,
+  onAuthenticate,
   onSwitchToRegister,
 }: LoginModalProps) {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
 
   if (!isOpen) return null;
 
@@ -37,55 +27,15 @@ export function LoginModal({
     setLoading(true);
 
     try {
-      const cleanId = identifier.trim().toLowerCase();
-      const passHash = await hashPassword(password);
-
-      // Admin authentication
-      if (cleanId === ADMIN_EMAIL && passHash === ADMIN_PASSWORD_SHA256) {
-        setIdentifier('');
-        setPassword('');
-        onLoginAdmin();
+      const authError = await onAuthenticate(identifier, password);
+      if (authError) {
+        setError(authError);
         return;
       }
-
-      // Member authentication by email or phone
-      const matchedUser = users.find(
-        (u) =>
-          u.email.toLowerCase() === cleanId ||
-          u.phone.replace(/\s+/g, '') === identifier.trim().replace(/\s+/g, ''),
-      );
-
-      if (!matchedUser || matchedUser.passwordHash !== passHash) {
-        setError('Invalid email/phone or password.');
-        return;
-      }
-
-      if (matchedUser.accountStatus === 'suspended') {
-        setError('This account has been suspended by E-Finance Admin.');
-        return;
-      }
-
       setIdentifier('');
       setPassword('');
-      onLoginUser(matchedUser.id);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleGoogleClick = async () => {
-    setError(null);
-    setGoogleLoading(true);
-    try {
-      await onGoogleSignIn();
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Google sign-in was cancelled or blocked by your browser popup settings.',
-      );
-    } finally {
-      setGoogleLoading(false);
     }
   };
 
@@ -106,30 +56,14 @@ export function LoginModal({
           <X className="w-5 h-5" />
         </button>
 
-        <div className="mb-5">
+        <div className="mb-6">
           <p className="text-xs font-semibold text-blue-800">E-Finance Rwanda</p>
           <h2 id="login-modal-title" className="font-display text-2xl font-bold text-[#071B38] mt-1">
             Sign in to your account
           </h2>
           <p className="text-xs text-slate-600 mt-1">
-            Access your E-Finance workspace on any device using Google Cloud Sync or your account credentials.
+            Enter your registered email or phone number and password to access your E-Finance workspace.
           </p>
-        </div>
-
-        <button
-          type="button"
-          onClick={handleGoogleClick}
-          disabled={googleLoading || loading}
-          className="w-full h-11 px-4 border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-slate-900 text-sm font-semibold rounded-lg inline-flex items-center justify-center gap-2.5 transition-colors"
-        >
-          <Globe className="w-4 h-4 text-blue-700" />
-          <span>{googleLoading ? 'Connecting to cloud...' : 'Continue with Google (Cross-Device Sync)'}</span>
-        </button>
-
-        <div className="my-4 flex items-center gap-3 text-[11px] font-medium text-slate-400">
-          <span className="flex-1 h-px bg-slate-200" />
-          <span>or sign in with email / phone</span>
-          <span className="flex-1 h-px bg-slate-200" />
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -171,7 +105,7 @@ export function LoginModal({
 
           <button
             type="submit"
-            disabled={loading || googleLoading}
+            disabled={loading}
             className="w-full h-11 px-5 bg-[#071B38] hover:bg-[#0c2954] disabled:opacity-60 text-white text-sm font-semibold rounded-lg inline-flex items-center justify-center gap-2 transition-colors"
           >
             <span>{loading ? 'Verifying...' : 'Sign In'}</span>

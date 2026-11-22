@@ -143,7 +143,7 @@ export function LandingView({
                 <span aria-hidden="true">·</span>
                 <span>MTN Mobile Money &amp; Airtel Money</span>
                 <span aria-hidden="true">·</span>
-                <span>Cross-Device Cloud Account Sync</span>
+                <span>Full RWF Transaction History</span>
               </div>
             </div>
 

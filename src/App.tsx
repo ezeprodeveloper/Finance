@@ -1,19 +1,25 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, User as FirebaseUser } from 'firebase/auth';
+import { useEffect, useRef, useState } from 'react';
+import {
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut,
+  User as FirebaseUser,
+} from 'firebase/auth';
 import { AdminDashboard } from './components/AdminDashboard';
 import { LandingView } from './components/LandingView';
 import { LoginModal } from './components/LoginModal';
-import { PageTransitionLoader } from './components/PageTransitionLoader';
-import { FirebaseRegistrationPrefill, RegisterWizard } from './components/RegisterWizard';
+import { RegisterWizard } from './components/RegisterWizard';
 import { SplashScreen } from './components/SplashScreen';
 import { UserDashboard } from './components/UserDashboard';
 import {
   ADMIN_EMAIL,
+  ADMIN_PASSWORD_SHA256,
   INVESTMENT_PLAN_TIERS,
   loadPlatformState,
   savePlatformState,
 } from './data/platformStore';
-import { auth, googleProvider } from './firebase';
+import { auth } from './firebase';
 import {
   cloudCreateUser,
   cloudDeleteDoc,
@@ -39,6 +45,7 @@ import {
 import {
   buildUssdFullCode,
   generateReference,
+  hashPassword,
 } from './utils/formatters';
 
 const ALLOWED_ADMIN_EMAILS = [ADMIN_EMAIL, 'hbmgshzchl@gmail.com'];
@@ -48,55 +55,19 @@ function isVerifiedAdminUser(fbUser: FirebaseUser | null): boolean {
   return ALLOWED_ADMIN_EMAILS.includes(fbUser.email.toLowerCase());
 }
 
-function splitDisplayName(displayName: string | null): { firstName: string; secondName: string } {
-  const clean = (displayName || '').trim();
-  if (!clean) return { firstName: '', secondName: '' };
-  const parts = clean.split(/\s+/);
-  return {
-    firstName: parts[0] || '',
-    secondName: parts.slice(1).join(' ') || '',
-  };
-}
-
 export default function App() {
   const [store, setStore] = useState<PlatformStoreState>(() => loadPlatformState());
   const [loginOpen, setLoginOpen] = useState(false);
   const [registerOpen, setRegisterOpen] = useState(false);
 
-  // Brand splash & page-to-page loader
+  // Initial platform brand splash only
   const [showSplash, setShowSplash] = useState(true);
-  const [pageLoading, setPageLoading] = useState(false);
-  const [pageLoadingLabel, setPageLoadingLabel] = useState('Loading...');
-  const [authSyncing, setAuthSyncing] = useState(false);
-  const pageLoadTimerRef = useRef<number | null>(null);
 
-  // Firebase Auth & Cloud Sync state
+  // Firebase Auth state
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(() => auth.currentUser);
-  const [firebasePrefill, setFirebasePrefill] = useState<FirebaseRegistrationPrefill | null>(null);
-  const [cloudNotice, setCloudNotice] = useState<string | null>(null);
 
   const storeRef = useRef(store);
   storeRef.current = store;
-
-  const triggerPageLoad = useCallback((label = 'Loading...') => {
-    setPageLoadingLabel(label);
-    setPageLoading(true);
-    if (pageLoadTimerRef.current) {
-      window.clearTimeout(pageLoadTimerRef.current);
-    }
-    pageLoadTimerRef.current = window.setTimeout(() => {
-      setPageLoading(false);
-      pageLoadTimerRef.current = null;
-    }, 360);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (pageLoadTimerRef.current) {
-        window.clearTimeout(pageLoadTimerRef.current);
-      }
-    };
-  }, []);
 
   useEffect(() => {
     savePlatformState(store);
@@ -136,7 +107,7 @@ export default function App() {
 
       setFirebaseUser(fbUser);
 
-      if (!fbUser || !fbUser.emailVerified) {
+      if (!fbUser) {
         return;
       }
 
@@ -157,6 +128,11 @@ export default function App() {
           onTaskSubmissions: (taskSubmissions) => setStore((prev) => ({ ...prev, taskSubmissions })),
           onTransactions: (transactions) => setStore((prev) => ({ ...prev, transactions })),
         });
+        return;
+      }
+
+      const fbEmail = (fbUser.email || '').toLowerCase();
+      if (ALLOWED_ADMIN_EMAILS.includes(fbEmail)) {
         return;
       }
 
@@ -289,7 +265,7 @@ export default function App() {
 
       // Mirror authorized ROI updates to Firestore outside React state updater
       const fbUser = auth.currentUser;
-      if (fbUser && fbUser.emailVerified) {
+      if (fbUser) {
         const adminAuth = isVerifiedAdminUser(fbUser);
         const fbUid = sanitizeDocId(fbUser.uid);
 
@@ -337,173 +313,204 @@ export default function App() {
   const canWriteMemberCloud = Boolean(
     currentUser &&
       firebaseUser &&
-      firebaseUser.emailVerified &&
       sanitizeDocId(firebaseUser.uid) === currentUser.id,
   );
 
   /* ------------------------------------------------------------------------ */
-  /* Registration & Authentication                                            */
+  /* Registration & Authentication (Silent Email/Password + Local Fallback)   */
   /* ------------------------------------------------------------------------ */
-  const handleGoogleSignIn = async () => {
-    setAuthSyncing(true);
-    setPageLoadingLabel('Connecting with Google Cloud...');
-    try {
-      const cred = await signInWithPopup(auth, googleProvider);
-      const fbUser = cred.user;
+  const handleAuthenticate = async (
+    identifier: string,
+    password: string,
+  ): Promise<string | null> => {
+    const cleanId = identifier.trim();
+    const normalized = cleanId.toLowerCase();
+    if (!cleanId || !password) {
+      return 'Enter your email or phone number and password.';
+    }
 
-      if (isVerifiedAdminUser(fbUser)) {
-        setLoginOpen(false);
-        setRegisterOpen(false);
-        triggerPageLoad('Loading Admin Control Center...');
-        setStore((prev) => ({
-          ...prev,
-          session: { type: 'admin' },
-        }));
-        return;
+    const enteredHash = await hashPassword(password);
+
+    // Unified Admin login path (silent Firebase Email/Password sync)
+    if (normalized === ADMIN_EMAIL.toLowerCase()) {
+      if (enteredHash !== ADMIN_PASSWORD_SHA256) {
+        return 'Invalid email/phone or password.';
       }
-
-      const safeUid = sanitizeDocId(fbUser.uid);
-      const cloudProfile = await fetchUserProfileFromCloud(safeUid);
-      if (cloudProfile) {
-        if (cloudProfile.accountStatus === 'suspended') {
-          await signOut(auth);
-          throw new Error('This account has been suspended by E-Finance Admin.');
+      try {
+        await signInWithEmailAndPassword(auth, ADMIN_EMAIL, password);
+      } catch (err) {
+        const code = (err as { code?: string })?.code;
+        if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
+          try {
+            await createUserWithEmailAndPassword(auth, ADMIN_EMAIL, password);
+          } catch {
+            // Local admin session remains functional even if Email/Password is not enabled in Firebase Console
+          }
         }
-        setLoginOpen(false);
-        setRegisterOpen(false);
-        triggerPageLoad('Loading your cloud account...');
-        setStore((prev) => {
-          const exists = prev.users.some((u) => u.id === cloudProfile.id);
-          return {
-            ...prev,
-            users: exists
-              ? prev.users.map((u) => (u.id === cloudProfile.id ? cloudProfile : u))
-              : [cloudProfile, ...prev.users],
-            session: { type: 'user', userId: cloudProfile.id },
-          };
-        });
-      } else {
-        const names = splitDisplayName(fbUser.displayName);
-        setFirebasePrefill({
-          uid: safeUid,
-          email: fbUser.email || '',
-          firstName: names.firstName,
-          secondName: names.secondName,
-        });
-        setLoginOpen(false);
-        setRegisterOpen(true);
       }
-    } finally {
-      setAuthSyncing(false);
-    }
-  };
-
-  const handleLinkGoogleDuringRegister = async () => {
-    const cred = await signInWithPopup(auth, googleProvider);
-    const fbUser = cred.user;
-    const safeUid = sanitizeDocId(fbUser.uid);
-
-    if (isVerifiedAdminUser(fbUser)) {
-      setRegisterOpen(false);
-      triggerPageLoad('Loading Admin Control Center...');
-      setStore((prev) => ({ ...prev, session: { type: 'admin' } }));
-      return;
-    }
-
-    const existingCloud = await fetchUserProfileFromCloud(safeUid);
-    if (existingCloud) {
-      setRegisterOpen(false);
-      triggerPageLoad('Existing cloud account found. Signing in...');
-      setStore((prev) => {
-        const exists = prev.users.some((u) => u.id === existingCloud.id);
-        return {
-          ...prev,
-          users: exists
-            ? prev.users.map((u) => (u.id === existingCloud.id ? existingCloud : u))
-            : [existingCloud, ...prev.users],
-          session: { type: 'user', userId: existingCloud.id },
-        };
-      });
-      return;
-    }
-
-    const names = splitDisplayName(fbUser.displayName);
-    setFirebasePrefill({
-      uid: safeUid,
-      email: fbUser.email || '',
-      firstName: names.firstName,
-      secondName: names.secondName,
-    });
-  };
-
-  const handleConnectMemberCloud = async () => {
-    setCloudNotice(null);
-    const cred = await signInWithPopup(auth, googleProvider);
-    const safeUid = sanitizeDocId(cred.user.uid);
-
-    if (isVerifiedAdminUser(cred.user)) {
-      triggerPageLoad('Loading Admin Control Center...');
-      setStore((prev) => ({ ...prev, session: { type: 'admin' } }));
-      return;
-    }
-
-    const cloudProfile = await fetchUserProfileFromCloud(safeUid);
-    if (cloudProfile) {
-      triggerPageLoad('Loading cloud profile...');
-      setStore((prev) => {
-        const exists = prev.users.some((u) => u.id === cloudProfile.id);
-        return {
-          ...prev,
-          users: exists
-            ? prev.users.map((u) => (u.id === cloudProfile.id ? cloudProfile : u))
-            : [cloudProfile, ...prev.users],
-          session: { type: 'user', userId: cloudProfile.id },
-        };
-      });
-      setCloudNotice('Cloud profile synced. Your balances and activity are live across devices.');
-      return;
-    }
-
-    if (currentUser && currentUser.accountStatus === 'pending_approval') {
-      const migratedUser: RegisteredUser = {
-        ...currentUser,
-        id: safeUid,
-      };
-      await cloudCreateUser(migratedUser);
       setStore((prev) => ({
         ...prev,
-        users: prev.users.map((u) => (u.id === currentUser.id ? migratedUser : u)),
-        session: { type: 'user', userId: safeUid },
+        session: { type: 'admin' },
       }));
-      setCloudNotice('Your pending registration is now synced to the cloud across devices.');
-      return;
+      setLoginOpen(false);
+      return null;
     }
 
-    setCloudNotice(
-      'This Google account does not have a cloud profile yet. Sign out and register using "Continue with Google" to create a cross-device cloud account.',
+    // Member login path
+    const phoneDigits = cleanId.replace(/[\s-]/g, '');
+    const matchedLocal = storeRef.current.users.find(
+      (u) =>
+        u.email.toLowerCase() === normalized ||
+        u.phone.replace(/[\s-]/g, '') === phoneDigits,
     );
-  };
 
-  const handleConnectAdminCloud = async () => {
-    const cred = await signInWithPopup(auth, googleProvider);
-    if (!isVerifiedAdminUser(cred.user)) {
-      await signOut(auth);
-      return;
+    const emailToTry = matchedLocal?.email ?? (cleanId.includes('@') ? normalized : null);
+
+    if (emailToTry) {
+      try {
+        const cred = await signInWithEmailAndPassword(auth, emailToTry, password);
+        const safeUid = sanitizeDocId(cred.user.uid);
+        let cloudProfile: RegisteredUser | null = null;
+        try {
+          cloudProfile = await fetchUserProfileFromCloud(safeUid);
+        } catch {
+          cloudProfile = null;
+        }
+
+        if (cloudProfile) {
+          if (cloudProfile.accountStatus === 'suspended') {
+            await signOut(auth);
+            return 'This account has been suspended by E-Finance Admin.';
+          }
+          setStore((prev) => {
+            const exists = prev.users.some((u) => u.id === cloudProfile.id);
+            return {
+              ...prev,
+              users: exists
+                ? prev.users.map((u) => (u.id === cloudProfile.id ? cloudProfile : u))
+                : [cloudProfile, ...prev.users],
+              session: { type: 'user', userId: cloudProfile.id },
+            };
+          });
+          setLoginOpen(false);
+          return null;
+        }
+
+        if (matchedLocal) {
+          if (matchedLocal.accountStatus === 'suspended') {
+            await signOut(auth);
+            return 'This account has been suspended by E-Finance Admin.';
+          }
+          let finalLocal = matchedLocal;
+          if (matchedLocal.accountStatus === 'pending_approval') {
+            finalLocal = { ...matchedLocal, id: safeUid };
+            try {
+              await cloudCreateUser(finalLocal);
+              setStore((prev) => ({
+                ...prev,
+                users: prev.users.map((u) => (u.id === matchedLocal.id ? finalLocal : u)),
+              }));
+            } catch {
+              finalLocal = matchedLocal;
+            }
+          }
+          setStore((prev) => ({
+            ...prev,
+            session: { type: 'user', userId: finalLocal.id },
+          }));
+          setLoginOpen(false);
+          return null;
+        }
+      } catch (err) {
+        const code = (err as { code?: string })?.code;
+
+        if (code === 'auth/too-many-requests') {
+          return 'Too many failed sign-in attempts. Please wait a moment and try again.';
+        }
+
+        if (matchedLocal) {
+          if (matchedLocal.passwordHash !== enteredHash) {
+            return 'Incorrect password. Please check and try again.';
+          }
+          if (matchedLocal.accountStatus === 'suspended') {
+            return 'This account has been suspended by E-Finance Admin.';
+          }
+
+          let finalLocal = matchedLocal;
+          if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
+            try {
+              const created = await createUserWithEmailAndPassword(auth, matchedLocal.email, password);
+              const safeUid = sanitizeDocId(created.user.uid);
+              if (matchedLocal.accountStatus === 'pending_approval') {
+                const migrated: RegisteredUser = { ...matchedLocal, id: safeUid };
+                await cloudCreateUser(migrated);
+                finalLocal = migrated;
+                setStore((prev) => ({
+                  ...prev,
+                  users: prev.users.map((u) => (u.id === matchedLocal.id ? migrated : u)),
+                }));
+              }
+            } catch {
+              // Silent fallback to local account
+            }
+          }
+
+          setStore((prev) => ({
+            ...prev,
+            session: { type: 'user', userId: finalLocal.id },
+          }));
+          setLoginOpen(false);
+          return null;
+        }
+
+        if (code === 'auth/wrong-password') {
+          return 'Incorrect password. Please check and try again.';
+        }
+        if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
+          return 'No matching account found, or incorrect password.';
+        }
+        if (code === 'auth/operation-not-allowed') {
+          return 'No matching account found on this device. Please create a 3-step account first.';
+        }
+        return 'Unable to sign in right now. Please verify your credentials and try again.';
+      }
     }
-    triggerPageLoad('Connecting Admin Live Cloud...');
+
+    return 'No matching account found, or incorrect password.';
   };
 
-  const handleRegisterComplete = (newUser: RegisteredUser) => {
-    triggerPageLoad('Creating your E-Finance account...');
+  const handleRegisterComplete = async (
+    newUser: RegisteredUser,
+    rawPassword: string,
+  ): Promise<string | null> => {
     let finalUser = newUser;
 
-    if (firebaseUser && firebaseUser.emailVerified && !isVerifiedAdminUser(firebaseUser)) {
-      const safeUid = sanitizeDocId(firebaseUser.uid);
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, newUser.email, rawPassword);
+      const safeUid = sanitizeDocId(cred.user.uid);
       finalUser = {
         ...newUser,
         id: safeUid,
       };
-      void cloudCreateUser(finalUser);
+      try {
+        await cloudCreateUser(finalUser);
+      } catch (cloudErr) {
+        console.warn('Cloud user creation notice:', cloudErr);
+      }
+    } catch (err) {
+      const code = (err as { code?: string })?.code;
+      if (code === 'auth/email-already-in-use') {
+        return 'An account with this email already exists. Please sign in instead.';
+      }
+      if (code === 'auth/invalid-email') {
+        return 'Please enter a valid email address.';
+      }
+      if (code === 'auth/weak-password') {
+        return 'Create a login password with at least 8 characters.';
+      }
+      if (code !== 'auth/operation-not-allowed' && code !== 'auth/network-request-failed') {
+        console.warn('Firebase registration notice:', err);
+      }
     }
 
     setStore((prev) => ({
@@ -511,32 +518,11 @@ export default function App() {
       users: [finalUser, ...prev.users.filter((u) => u.id !== finalUser.id)],
       session: { type: 'user', userId: finalUser.id },
     }));
-    setFirebasePrefill(null);
     setRegisterOpen(false);
-  };
-
-  const handleLoginUser = (userId: string) => {
-    triggerPageLoad('Opening member dashboard...');
-    setStore((prev) => ({
-      ...prev,
-      session: { type: 'user', userId },
-    }));
-    setLoginOpen(false);
-  };
-
-  const handleLoginAdmin = () => {
-    triggerPageLoad('Opening Admin Control Center...');
-    setStore((prev) => ({
-      ...prev,
-      session: { type: 'admin' },
-    }));
-    setLoginOpen(false);
+    return null;
   };
 
   const handleSignOut = () => {
-    triggerPageLoad('Signing out...');
-    setCloudNotice(null);
-    setFirebasePrefill(null);
     if (auth.currentUser) {
       void signOut(auth);
     }
@@ -1788,9 +1774,6 @@ export default function App() {
           taskSubmissions={store.taskSubmissions}
           promotions={store.promotions}
           settings={store.settings}
-          cloudConnected={isCloudAdmin}
-          onTriggerPageLoad={triggerPageLoad}
-          onConnectAdminCloud={handleConnectAdminCloud}
           onApproveUserRegistration={handleApproveUserRegistration}
           onActivateUserWithBonus={handleActivateUserWithBonus}
           onToggleSuspendUser={handleToggleSuspendUser}
@@ -1828,11 +1811,8 @@ export default function App() {
             </button>
             <LoginModal
               isOpen={loginOpen}
-              users={store.users}
               onClose={() => setLoginOpen(false)}
-              onLoginUser={handleLoginUser}
-              onLoginAdmin={handleLoginAdmin}
-              onGoogleSignIn={handleGoogleSignIn}
+              onAuthenticate={handleAuthenticate}
               onSwitchToRegister={() => setLoginOpen(false)}
             />
           </div>
@@ -1859,10 +1839,6 @@ export default function App() {
           customTasks={store.customTasks}
           taskSubmissions={store.taskSubmissions}
           transactions={store.transactions}
-          cloudConnected={canWriteMemberCloud}
-          cloudNotice={cloudNotice}
-          onTriggerPageLoad={triggerPageLoad}
-          onConnectCloudAccount={handleConnectMemberCloud}
           onSubmitActivationPayment={handleSubmitActivationPayment}
           onDailyCheckIn={handleDailyCheckIn}
           onSubmitKyc={handleSubmitKyc}
@@ -1890,21 +1866,13 @@ export default function App() {
           settings={store.settings}
           totalActiveVideos={store.videoCampaigns.filter((v) => v.status === 'active').length}
           totalActiveTasks={store.customTasks.filter((t) => t.status === 'active').length}
-          onOpenLogin={() => {
-            triggerPageLoad('Opening sign in...');
-            setLoginOpen(true);
-          }}
-          onOpenRegister={() => {
-            triggerPageLoad('Opening registration...');
-            setRegisterOpen(true);
-          }}
+          onOpenLogin={() => setLoginOpen(true)}
+          onOpenRegister={() => setRegisterOpen(true)}
         />
 
         <RegisterWizard
           isOpen={registerOpen}
           existingUsers={store.users}
-          firebasePrefill={firebasePrefill}
-          onLinkGoogle={handleLinkGoogleDuringRegister}
           onClose={() => setRegisterOpen(false)}
           onComplete={handleRegisterComplete}
           onSwitchToLogin={() => {
@@ -1915,11 +1883,8 @@ export default function App() {
 
         <LoginModal
           isOpen={loginOpen}
-          users={store.users}
           onClose={() => setLoginOpen(false)}
-          onLoginUser={handleLoginUser}
-          onLoginAdmin={handleLoginAdmin}
-          onGoogleSignIn={handleGoogleSignIn}
+          onAuthenticate={handleAuthenticate}
           onSwitchToRegister={() => {
             setLoginOpen(false);
             setRegisterOpen(true);
@@ -1932,7 +1897,6 @@ export default function App() {
   return (
     <>
       {showSplash && <SplashScreen onFinish={() => setShowSplash(false)} />}
-      <PageTransitionLoader visible={!showSplash && (pageLoading || authSyncing)} label={pageLoadingLabel} />
       {renderMainContent()}
     </>
   );

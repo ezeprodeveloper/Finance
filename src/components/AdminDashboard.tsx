@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   Banknote,
   CheckCircle2,
-  Globe,
   LayoutDashboard,
   LogOut,
   Megaphone,
@@ -41,9 +40,6 @@ interface AdminDashboardProps {
   taskSubmissions: TaskSubmission[];
   promotions: AdminPromotion[];
   settings: SystemSettings;
-  cloudConnected: boolean;
-  onTriggerPageLoad: (label?: string) => void;
-  onConnectAdminCloud: () => Promise<void>;
   onApproveUserRegistration: (userId: string) => void;
   onActivateUserWithBonus: (userId: string) => void;
   onToggleSuspendUser: (userId: string) => void;
@@ -79,11 +75,9 @@ const ADMIN_NAV: Array<{
 export function AdminDashboard(props: AdminDashboardProps) {
   const [section, setSection] = useState<AdminPortalSection>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [syncingCloud, setSyncingCloud] = useState(false);
 
   const handleSelectSection = (next: AdminPortalSection) => {
     if (next === section) return;
-    props.onTriggerPageLoad('Loading section...');
     setSection(next);
   };
 
@@ -171,29 +165,6 @@ export function AdminDashboard(props: AdminDashboardProps) {
             <p className="font-semibold text-white">System Administrator</p>
             <p className="font-mono text-[11px] text-slate-300 truncate">ezeprodeveloper@gmail.com</p>
           </div>
-          {props.cloudConnected ? (
-            <p className="text-[11px] font-medium text-emerald-300 inline-flex items-center gap-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-              <span>Cloud Live Sync Active</span>
-            </p>
-          ) : (
-            <button
-              type="button"
-              disabled={syncingCloud}
-              onClick={async () => {
-                setSyncingCloud(true);
-                try {
-                  await props.onConnectAdminCloud();
-                } finally {
-                  setSyncingCloud(false);
-                }
-              }}
-              className="w-full h-9 px-3 bg-emerald-600/90 hover:bg-emerald-600 rounded-lg text-xs font-semibold text-white inline-flex items-center justify-center gap-1.5"
-            >
-              <Globe className="w-3.5 h-3.5" />
-              <span>{syncingCloud ? 'Connecting...' : 'Sync Admin Cloud'}</span>
-            </button>
-          )}
           <button
             type="button"
             onClick={props.onSignOut}
