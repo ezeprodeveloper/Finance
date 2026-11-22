@@ -1,0 +1,105 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    scroll-behavior: smooth;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@keyframes efinance-gradient-shift {
+  0% {
+    background-position: 0% 50%;
+  }
+  25% {
+    background-position: 50% 100%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  75% {
+    background-position: 50% 0%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes efinance-clock-colors {
+  0% {
+    color: #38bdf8;
+    border-color: rgba(56, 189, 248, 0.45);
+  }
+  25% {
+    color: #34d399;
+    border-color: rgba(52, 211, 153, 0.45);
+  }
+  50% {
+    color: #fbbf24;
+    border-color: rgba(251, 191, 36, 0.45);
+  }
+  75% {
+    color: #a78bfa;
+    border-color: rgba(167, 139, 250, 0.45);
+  }
+  100% {
+    color: #38bdf8;
+    border-color: rgba(56, 189, 248, 0.45);
+  }
+}
+
+.bg-shifting-aurora {
+  background: linear-gradient(
+    -45deg,
+    #061630,
+    #0f3460,
+    #064e3b,
+    #1e3a8a,
+    #0d3b66,
+    #134e4a
+  );
+  background-size: 400% 400%;
+  animation: efinance-gradient-shift 18s ease infinite;
+}
+
+.bg-shifting-soft {
+  background: linear-gradient(
+    -45deg,
+    #f0f7ff,
+    #ecfdf5,
+    #eff6ff,
+    #fefce8,
+    #f0fdfa
+  );
+  background-size: 350% 350%;
+  animation: efinance-gradient-shift 22s ease infinite;
+}
+
+.clock-color-cycle {
+  animation: efinance-clock-colors 10s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .bg-shifting-aurora,
+  .bg-shifting-soft,
+  .clock-color-cycle {
+    animation: none;
+  }
+}
