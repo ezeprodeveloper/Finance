@@ -735,16 +735,17 @@ export function createAdminRouter(): Router {
 
       const isDebit = usdtReq.actionType === 'withdraw' || usdtReq.actionType === 'send_binance';
       if ((usdtReq.actionType === 'deposit' && decision === 'approved') || (isDebit && decision === 'rejected')) {
+        const userBalRow = await dbQueryOne<{ usdt_balance: number }>(
+          'SELECT usdt_balance FROM users WHERE id = $1',
+          [usdtReq.userId],
+        );
+        const nextUsdtBalance = Number(
+          (Number(userBalRow?.usdt_balance ?? 0) + usdtReq.amountUsdt).toFixed(2),
+        );
         await dbExecute(
-          `UPDATE users SET usdt_balance = ROUND((usdt_balance + $1)::numeric, 2), updated_at = $2 WHERE id = $3`,
-          [usdtReq.amountUsdt, nowIso, usdtReq.userId],
-        ).catch(async () => {
-          // SQLite syntax fallback
-          await dbExecute(
-            `UPDATE users SET usdt_balance = ROUND(usdt_balance + $1, 2), updated_at = $2 WHERE id = $3`,
-            [usdtReq.amountUsdt, nowIso, usdtReq.userId],
-          );
-        });
+          `UPDATE users SET usdt_balance = $1, updated_at = $2 WHERE id = $3`,
+          [nextUsdtBalance, nowIso, usdtReq.userId],
+        );
       }
 
       const targetCategory = usdtReq.actionType === 'deposit' ? 'USDT Deposit' : 'USDT Send / Withdraw';

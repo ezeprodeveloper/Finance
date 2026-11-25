@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowRight, Lock, X } from 'lucide-react';
 
 interface LoginModalProps {
@@ -25,6 +25,14 @@ export function LoginModal({
   const [adminSetupMode, setAdminSetupMode] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setError(null);
+      setAdminSetupMode(false);
+      setConfirmAdminPass('');
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 

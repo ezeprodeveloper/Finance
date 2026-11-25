@@ -6,7 +6,7 @@ import { RegisterWizard } from './components/RegisterWizard';
 import { SplashScreen } from './components/SplashScreen';
 import { UserDashboard } from './components/UserDashboard';
 import { INITIAL_PLATFORM_STATE } from './data/platformStore';
-import { ApiError, apiClient } from './services/apiClient';
+import { ApiError, apiClient, type SetupStatusResponse } from './services/apiClient';
 import {
   BetSession,
   FxExchangeRecord,
@@ -32,9 +32,31 @@ export default function App() {
   const [publicStats, setPublicStats] = useState({ totalActiveVideos: 0, totalActiveTasks: 0 });
   const [loginOpen, setLoginOpen] = useState(false);
   const [registerOpen, setRegisterOpen] = useState(false);
+  const [setupStatus, setSetupStatus] = useState<SetupStatusResponse | null>(null);
+  const [checkingSetup, setCheckingSetup] = useState(false);
+  const [initialSetupMessage, setInitialSetupMessage] = useState<string | null>(null);
 
   // Initial platform brand splash only
   const [showSplash, setShowSplash] = useState(true);
+
+  const verifyDatabaseSetup = useCallback(async () => {
+    setCheckingSetup(true);
+    try {
+      const status = await apiClient.getSetupStatus();
+      setSetupStatus(status);
+      if (status.dbReady && status.newlyApplied.length > 0 && status.setupMessage) {
+        setInitialSetupMessage(status.setupMessage);
+      }
+    } catch {
+      // Retain existing state if transient error occurs
+    } finally {
+      setCheckingSetup(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void verifyDatabaseSetup();
+  }, [verifyDatabaseSetup]);
 
   const handleSignOut = useCallback(() => {
     const token = authTokenRef.current;
@@ -184,8 +206,17 @@ export default function App() {
       authTokenRef.current = res.token;
 
       if (res.role === 'admin') {
+        setStore((prev) => ({
+          ...prev,
+          session: { type: 'admin' },
+        }));
         await refreshAdminState(res.token);
       } else {
+        setStore((prev) => ({
+          ...prev,
+          users: [res.user],
+          session: { type: 'user', userId: res.user.id },
+        }));
         await refreshMemberState(res.token);
       }
       setLoginOpen(false);
@@ -209,6 +240,10 @@ export default function App() {
       const res = await apiClient.claimAdminPassword(email, password);
       setAuthToken(res.token);
       authTokenRef.current = res.token;
+      setStore((prev) => ({
+        ...prev,
+        session: { type: 'admin' },
+      }));
       await refreshAdminState(res.token);
       setLoginOpen(false);
       return null;
@@ -239,6 +274,11 @@ export default function App() {
       });
       setAuthToken(res.token);
       authTokenRef.current = res.token;
+      setStore((prev) => ({
+        ...prev,
+        users: [res.user],
+        session: { type: 'user', userId: res.user.id },
+      }));
       await refreshMemberState(res.token);
       setRegisterOpen(false);
       return null;
@@ -638,6 +678,44 @@ export default function App() {
   /* Render Router                                                            */
   /* ------------------------------------------------------------------------ */
   const renderMainContent = () => {
+    if (setupStatus && !setupStatus.dbReady && setupStatus.needsVercelPostgresStore) {
+      return (
+        <div className="min-h-screen bg-shifting-aurora text-white flex items-center justify-center p-6">
+          <div className="max-w-lg w-full bg-white text-slate-900 rounded-2xl p-8 space-y-5 shadow-2xl">
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wider text-[#071B38]">
+                Vercel Persistent Database Setup
+              </p>
+              <h1 className="font-display text-2xl font-bold text-[#071B38]">
+                Connect a Postgres Store to Continue
+              </h1>
+              <p className="text-sm text-slate-600 leading-relaxed">
+                E-Finance initializes all tables, indexes, migrations, and default settings automatically — no manual SQL or record insertion is required. On Vercel, attaching a persistent PostgreSQL store requires your one-click authorization:
+              </p>
+            </div>
+            <ol className="text-sm text-slate-700 space-y-2 list-decimal pl-5">
+              <li>Open your project in the Vercel Dashboard and go to the <strong>Storage</strong> tab.</li>
+              <li>Click <strong>Create Database / Marketplace</strong> and connect a Postgres provider (Neon, Supabase, or Prisma Postgres).</li>
+              <li>Trigger a <strong>Redeploy</strong> so Vercel injects <code className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">POSTGRES_URL</code> / <code className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">DATABASE_URL</code> automatically.</li>
+            </ol>
+            {setupStatus.error && (
+              <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
+                {setupStatus.error}
+              </p>
+            )}
+            <button
+              type="button"
+              disabled={checkingSetup}
+              onClick={() => void verifyDatabaseSetup()}
+              className="w-full h-11 px-5 bg-[#071B38] hover:bg-[#0D2E5E] disabled:opacity-60 text-white text-sm font-semibold rounded-xl transition-colors"
+            >
+              {checkingSetup ? 'Checking Database Connection...' : 'Verify Database Connection'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     if (store.session.type === 'admin') {
       return (
         <AdminDashboard
@@ -656,6 +734,8 @@ export default function App() {
           transactions={store.transactions}
           promotions={store.promotions}
           settings={store.settings}
+          initialSetupMessage={initialSetupMessage}
+          onDismissSetupMessage={() => setInitialSetupMessage(null)}
           onApproveUserRegistration={handleApproveUserRegistration}
           onActivateUserWithBonus={handleActivateUserWithBonus}
           onToggleSuspendUser={handleToggleSuspendUser}

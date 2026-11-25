@@ -94,6 +94,8 @@ interface AdminDashboardProps {
   onDeletePromotion: (promoId: string) => void;
   onUpdateSettings: (next: SystemSettings) => void;
   onSignOut: () => void;
+  initialSetupMessage?: string | null;
+  onDismissSetupMessage?: () => void;
 }
 
 const ADMIN_NAV: Array<{
@@ -334,6 +336,28 @@ export function AdminDashboard(props: AdminDashboardProps) {
         </header>
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1200px] w-full mx-auto space-y-6">
+          {props.initialSetupMessage && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 flex items-start justify-between gap-3 text-emerald-900">
+              <div className="flex items-start gap-2.5 text-xs sm:text-sm">
+                <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold">Automatic Database Initialization Complete</p>
+                  <p className="text-emerald-800 mt-0.5">{props.initialSetupMessage}</p>
+                </div>
+              </div>
+              {props.onDismissSetupMessage && (
+                <button
+                  type="button"
+                  onClick={props.onDismissSetupMessage}
+                  aria-label="Dismiss setup notice"
+                  className="text-emerald-700 hover:text-emerald-950 p-1 rounded-md"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          )}
+
           {/* 1. Admin Dashboard Overview */}
           {section === 'dashboard' && (
             <div className="space-y-6">

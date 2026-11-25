@@ -387,15 +387,13 @@ export function createMemberRouter(): Router {
       }
       const nowIso = new Date().toISOString();
       await dbExecute(
-        `UPDATE users SET wallet_balance_rwf = wallet_balance_rwf + $1, savings_balance_rwf = GREATEST(0, savings_balance_rwf - $1), updated_at = $2 WHERE id = $3`,
+        `UPDATE users
+         SET wallet_balance_rwf = wallet_balance_rwf + $1,
+             savings_balance_rwf = CASE WHEN savings_balance_rwf - $1 < 0 THEN 0 ELSE savings_balance_rwf - $1 END,
+             updated_at = $2
+         WHERE id = $3`,
         [amountRwf, nowIso, uid],
-      ).catch(async () => {
-        // SQLite uses MAX instead of GREATEST
-        await dbExecute(
-          `UPDATE users SET wallet_balance_rwf = wallet_balance_rwf + $1, savings_balance_rwf = MAX(0, savings_balance_rwf - $1), updated_at = $2 WHERE id = $3`,
-          [amountRwf, nowIso, uid],
-        );
-      });
+      );
       await dbExecute(
         `UPDATE savings_goals SET current_rwf = current_rwf - $1, updated_at = $2 WHERE id = $3`,
         [amountRwf, nowIso, goalId],

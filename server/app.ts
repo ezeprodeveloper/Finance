@@ -1,6 +1,13 @@
 import express from 'express';
 import { createAdminRouter } from './adminRoutes.ts';
-import { dbExecute, dbQuery, dbQueryOne, ensureSchema, getSqlEngine } from './db.ts';
+import {
+  checkDatabaseStatus,
+  DatabaseConfigurationError,
+  dbExecute,
+  dbQuery,
+  dbQueryOne,
+  ensureSchema,
+} from './db.ts';
 import { getPlatformSettings, mapPromotionRow, mapUserRow } from './mappers.ts';
 import { createMemberRouter } from './memberRoutes.ts';
 import { createSession, getConfiguredAdminEmail, getEnvAdminPasscode } from './middleware.ts';
@@ -9,6 +16,7 @@ import {
   generateAccountNumber,
   generateReferralCode,
   generateSafeId,
+  getRwandaPhoneVariants,
   hashSecret,
   isValidRwandaId,
   isValidRwandaPhone,
@@ -19,19 +27,83 @@ export function createApiApp(): express.Express {
   const app = express();
   app.use(express.json({ limit: '15mb' }));
 
-  // Ensure SQL tables and initial settings exist lazily before serving /api requests
+  app.get('/api/health', async (_req, res) => {
+    const dbStatus = await checkDatabaseStatus();
+    if (!dbStatus.connected) {
+      res.status(503).json({
+        ok: false,
+        connected: false,
+        engine: dbStatus.engine,
+        needsVercelPostgresStore: dbStatus.needsVercelPostgresStore,
+        error: dbStatus.error,
+      });
+      return;
+    }
+    res.json({
+      ok: true,
+      connected: true,
+      engine: dbStatus.engine,
+      migrationsApplied: dbStatus.migrationSummary?.appliedVersions ?? [],
+    });
+  });
+
+  app.get('/api/setup/status', async (_req, res) => {
+    const dbStatus = await checkDatabaseStatus();
+    if (!dbStatus.connected) {
+      res.status(200).json({
+        dbReady: false,
+        engine: dbStatus.engine,
+        needsVercelPostgresStore: dbStatus.needsVercelPostgresStore,
+        error: dbStatus.error,
+        adminConfigured: false,
+        migrationsApplied: [],
+        newlyApplied: [],
+      });
+      return;
+    }
+
+    let adminConfigured = Boolean(getEnvAdminPasscode());
+    if (!adminConfigured) {
+      const row = await dbQueryOne<{ id: string }>(
+        'SELECT id FROM admin_credentials WHERE id = $1',
+        ['primary'],
+      ).catch(() => null);
+      adminConfigured = Boolean(row);
+    }
+
+    const newlyApplied = dbStatus.migrationSummary?.newlyApplied ?? [];
+    res.json({
+      dbReady: true,
+      engine: dbStatus.engine,
+      needsVercelPostgresStore: false,
+      error: null,
+      adminConfigured,
+      migrationsApplied: dbStatus.migrationSummary?.appliedVersions ?? [],
+      newlyApplied,
+      alreadyInitialized: dbStatus.migrationSummary?.alreadyInitialized ?? false,
+      setupMessage:
+        newlyApplied.length > 0
+          ? `Database automatically initialized (${dbStatus.engine}) with ${dbStatus.migrationSummary?.appliedVersions.length ?? 0} schema migrations and default settings.`
+          : `Database connected (${dbStatus.engine}) and existing data preserved.`,
+    });
+  });
+
+  // Ensure SQL schema & pending migrations are applied lazily before all other /api routes
   app.use('/api', async (_req, res, next) => {
     try {
       await ensureSchema();
       next();
     } catch (err) {
       console.error('Database initialization error:', err);
+      if (err instanceof DatabaseConfigurationError) {
+        res.status(503).json({
+          error: err.message,
+          needsVercelPostgresStore: true,
+        });
+        return;
+      }
       res.status(500).json({ error: 'Database initialization failed.' });
     }
-  });
-
-  app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, engine: getSqlEngine() });
   });
 
   app.get('/api/public/bootstrap', async (_req, res) => {
@@ -166,10 +238,17 @@ export function createApiApp(): express.Express {
         return;
       }
 
-      const phoneDigits = identifier.replace(/[\s-]/g, '');
+      const phoneVariants = getRwandaPhoneVariants(identifier);
+      const pv0 = phoneVariants[0] ?? normalized;
+      const pv1 = phoneVariants[1] ?? pv0;
+      const pv2 = phoneVariants[2] ?? pv0;
+      const pv3 = phoneVariants[3] ?? pv0;
       const userRow = await dbQueryOne<Record<string, unknown>>(
-        `SELECT * FROM users WHERE LOWER(email) = $1 OR REPLACE(REPLACE(phone, ' ', ''), '-', '') = $2 LIMIT 1`,
-        [normalized, phoneDigits],
+        `SELECT * FROM users
+         WHERE LOWER(email) = $1
+            OR REPLACE(REPLACE(phone, ' ', ''), '-', '') IN ($2, $3, $4, $5)
+         LIMIT 1`,
+        [normalized, pv0, pv1, pv2, pv3],
       );
 
       if (!userRow) {
@@ -242,10 +321,18 @@ export function createApiApp(): express.Express {
         return;
       }
 
-      const cleanPhone = phone.replace(/[\s-]/g, '');
+      const regVariants = getRwandaPhoneVariants(phone);
+      const rv0 = regVariants[0] ?? phone.replace(/[\s-]/g, '');
+      const rv1 = regVariants[1] ?? rv0;
+      const rv2 = regVariants[2] ?? rv0;
+      const rv3 = regVariants[3] ?? rv0;
       const dup = await dbQueryOne<{ email: string; id_number: string }>(
-        `SELECT email, id_number FROM users WHERE LOWER(email) = $1 OR REPLACE(REPLACE(phone, ' ', ''), '-', '') = $2 OR id_number = $3 LIMIT 1`,
-        [email, cleanPhone, idNumber],
+        `SELECT email, id_number FROM users
+         WHERE LOWER(email) = $1
+            OR REPLACE(REPLACE(phone, ' ', ''), '-', '') IN ($2, $3, $4, $5)
+            OR id_number = $6
+         LIMIT 1`,
+        [email, rv0, rv1, rv2, rv3, idNumber],
       );
       if (dup) {
         if (dup.email.toLowerCase() === email) {
@@ -343,6 +430,9 @@ export function createApiApp(): express.Express {
 
   app.use('/api/member', createMemberRouter());
   app.use('/api/admin', createAdminRouter());
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'API endpoint not found.' });
+  });
 
   return app;
 }

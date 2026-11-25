@@ -51,13 +51,29 @@ async function request<T>(
 
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
+    const fallbackMessage =
+      res.status === 404
+        ? 'API endpoint unavailable (404). Verify the backend server or serverless /api function is deployed.'
+        : `Request failed (${res.status})`;
     throw new ApiError(
-      typeof data.error === 'string' ? data.error : `Request failed (${res.status})`,
+      typeof data.error === 'string' ? data.error : fallbackMessage,
       res.status,
       data,
     );
   }
   return data as T;
+}
+
+export interface SetupStatusResponse {
+  dbReady: boolean;
+  engine: 'postgres' | 'sqlite' | 'unconfigured';
+  needsVercelPostgresStore: boolean;
+  error: string | null;
+  adminConfigured: boolean;
+  migrationsApplied: number[];
+  newlyApplied: number[];
+  alreadyInitialized?: boolean;
+  setupMessage?: string;
 }
 
 export interface PublicBootstrapResponse {
@@ -112,6 +128,8 @@ export type LoginResponse =
   | { token: string; role: 'user'; user: RegisteredUser };
 
 export const apiClient = {
+  getSetupStatus: () => request<SetupStatusResponse>('/api/setup/status'),
+
   getPublicBootstrap: () => request<PublicBootstrapResponse>('/api/public/bootstrap'),
 
   getAdminStatus: () =>

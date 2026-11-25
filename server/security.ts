@@ -58,6 +58,14 @@ export function isValidRwandaPhone(phone: string): boolean {
   return /^(\+?250|0)?7[2389]\d{7}$/.test(clean);
 }
 
+export function getRwandaPhoneVariants(phone: string): string[] {
+  const clean = phone.replace(/[\s-]/g, '');
+  const match = clean.match(/^(?:\+?250|0)?(7[2389]\d{7})$/);
+  if (!match) return clean ? [clean] : [];
+  const core9 = match[1];
+  return [`0${core9}`, `+250${core9}`, `250${core9}`, core9];
+}
+
 export function isValidRwandaId(idNumber: string): boolean {
   const clean = idNumber.replace(/\s/g, '');
   return /^\d{16}$/.test(clean);
