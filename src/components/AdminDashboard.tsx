@@ -1,11 +1,16 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Banknote,
   CheckCircle2,
+  Coins,
+  Eye,
+  History,
   LayoutDashboard,
   LogOut,
   Megaphone,
   Menu,
+  PlusCircle,
+  Search,
   Settings,
   ShieldCheck,
   Trash2,
@@ -17,16 +22,27 @@ import {
 import {
   AdminPortalSection,
   AdminPromotion,
+  AirtimeRequest,
+  BetSession,
   CustomTask,
+  FxExchangeRecord,
   LoanRequest,
+  P2PTransfer,
   RegisteredUser,
   ShortVideoCampaign,
   SystemSettings,
   TaskSubmission,
+  TransactionRecord,
+  UsdtRequest,
   UserInvestment,
   WithdrawalRequest,
 } from '../types/finance';
-import { formatDateTime, formatRwf, readFileAsDataUrl } from '../utils/formatters';
+import {
+  formatDateTime,
+  formatRwf,
+  formatUsdt,
+  readFileAsDataUrl,
+} from '../utils/formatters';
 import { ColorChangingClock } from './ColorChangingClock';
 import { StatusLabel } from './StatusLabel';
 
@@ -38,19 +54,41 @@ interface AdminDashboardProps {
   videoCampaigns: ShortVideoCampaign[];
   customTasks: CustomTask[];
   taskSubmissions: TaskSubmission[];
+  betSessions: BetSession[];
+  airtimeRequests: AirtimeRequest[];
+  p2pTransfers: P2PTransfer[];
+  fxExchanges: FxExchangeRecord[];
+  usdtRequests: UsdtRequest[];
+  transactions: TransactionRecord[];
   promotions: AdminPromotion[];
   settings: SystemSettings;
   onApproveUserRegistration: (userId: string) => void;
   onActivateUserWithBonus: (userId: string) => void;
   onToggleSuspendUser: (userId: string) => void;
+  onDeleteUser: (userId: string) => void;
   onAdminUpdateUser: (updated: RegisteredUser) => void;
   onReviewKyc: (userId: string, decision: 'approved' | 'rejected', note?: string) => void;
   onReviewVideoCampaign: (campaignId: string, decision: 'active' | 'rejected') => void;
   onReviewCustomTask: (taskId: string, decision: 'active' | 'rejected') => void;
+  onAdminCreateVideoCampaign: (payload: {
+    title: string;
+    description: string;
+    videoUrl: string;
+    rewardPerViewRwf: number;
+    targetViewers: number;
+  }) => void;
+  onAdminCreateCustomTask: (payload: {
+    title: string;
+    requirements: string;
+    rewardPerCompletionRwf: number;
+    targetCompletions: number;
+  }) => void;
   onReviewTaskSubmission: (submissionId: string, decision: 'approved' | 'rejected', note?: string) => void;
   onReviewLoan: (loanId: string, decision: 'approved' | 'rejected') => void;
   onReviewInvestment: (investmentId: string, decision: 'active' | 'rejected') => void;
   onReviewWithdrawal: (withdrawalId: string, decision: 'paid' | 'rejected') => void;
+  onReviewAirtime: (requestId: string, decision: 'approved' | 'rejected') => void;
+  onReviewUsdtRequest: (requestId: string, decision: 'approved' | 'rejected') => void;
   onAddPromotion: (title: string, category: string, summary: string) => void;
   onTogglePromotion: (promoId: string) => void;
   onDeletePromotion: (promoId: string) => void;
@@ -66,6 +104,8 @@ const ADMIN_NAV: Array<{
   { id: 'dashboard', label: 'Admin Overview', icon: LayoutDashboard },
   { id: 'users', label: 'Users & Photos', icon: Users },
   { id: 'kyc', label: 'Rwanda KYC Desk', icon: ShieldCheck },
+  { id: 'services_crypto', label: 'Airtime, USDT & Binance', icon: Coins },
+  { id: 'transactions_audit', label: 'Transactions & 10% Tax', icon: History },
   { id: 'videos_tasks', label: 'Videos & Tasks', icon: Video },
   { id: 'loans_withdrawals', label: 'Loans & Payouts', icon: Banknote },
   { id: 'promotions', label: 'Public Promotions', icon: Megaphone },
@@ -81,12 +121,33 @@ export function AdminDashboard(props: AdminDashboardProps) {
     setSection(next);
   };
 
-  // User editor modal state
+  // User editor, delete confirmation & photo lightbox modal state
   const [editingUser, setEditingUser] = useState<RegisteredUser | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  const [confirmDeleteUser, setConfirmDeleteUser] = useState<RegisteredUser | null>(null);
+  const [previewPhoto, setPreviewPhoto] = useState<{ url: string; caption: string } | null>(null);
 
   // KYC note
   const [kycNotes, setKycNotes] = useState<Record<string, string>>({});
+
+  // Admin direct add Video & Task state
+  const [vidTitle, setVidTitle] = useState('');
+  const [vidDesc, setVidDesc] = useState('');
+  const [vidUrl, setVidUrl] = useState('');
+  const [vidFileName, setVidFileName] = useState('');
+  const [vidReward, setVidReward] = useState(String(props.settings.minVideoRewardRwf || 50));
+  const [vidTarget, setVidTarget] = useState('50');
+  const [vidNotice, setVidNotice] = useState<string | null>(null);
+
+  const [tskTitle, setTskTitle] = useState('');
+  const [tskReqs, setTskReqs] = useState('');
+  const [tskReward, setTskReward] = useState('100');
+  const [tskTarget, setTskTarget] = useState('50');
+  const [tskNotice, setTskNotice] = useState<string | null>(null);
+
+  // Audit search/filter
+  const [auditSearch, setAuditSearch] = useState('');
+  const [auditCategory, setAuditCategory] = useState('All');
 
   // Promotion form
   const [promoTitle, setPromoTitle] = useState('');
@@ -96,6 +157,10 @@ export function AdminDashboard(props: AdminDashboardProps) {
   // Settings draft
   const [settingsDraft, setSettingsDraft] = useState<SystemSettings>(props.settings);
   const [settingsSaved, setSettingsSaved] = useState(false);
+
+  useEffect(() => {
+    setSettingsDraft(props.settings);
+  }, [props.settings]);
 
   const pendingRegistrations = props.users.filter((u) => u.accountStatus === 'pending_approval').length;
   const pendingActivations = props.users.filter(
@@ -108,12 +173,33 @@ export function AdminDashboard(props: AdminDashboardProps) {
   const pendingLoans = props.loans.filter((l) => l.status === 'pending_admin').length;
   const pendingInvestments = props.investments.filter((i) => i.status === 'pending_admin').length;
   const pendingWithdrawals = props.withdrawals.filter((w) => w.status === 'pending_admin').length;
+  const pendingAirtime = props.airtimeRequests.filter((a) => a.status === 'pending_admin').length;
+  const pendingUsdt = props.usdtRequests.filter((u) => u.status === 'pending_admin').length;
 
   const totalWithdrawalFees = props.withdrawals
     .filter((w) => w.status === 'paid')
     .reduce((sum, w) => sum + w.feeRwf, 0);
 
+  const totalP2pTaxRwf = props.p2pTransfers.reduce((sum, t) => sum + t.taxRwf, 0);
+  const totalP2pVolumeRwf = props.p2pTransfers.reduce((sum, t) => sum + t.grossAmountRwf, 0);
+
   const kycQueue = props.users.filter((u) => u.kycStatus !== 'not_submitted' && u.kycData);
+
+  const filteredTransactions = useMemo(() => {
+    const q = auditSearch.trim().toLowerCase();
+    return props.transactions.filter((tx) => {
+      if (auditCategory !== 'All' && tx.category !== auditCategory) return false;
+      if (!q) return true;
+      const owner = props.users.find((u) => u.id === tx.userId);
+      const ownerLabel = owner ? `${owner.firstName} ${owner.secondName} ${owner.accountNumber}` : tx.userId;
+      return (
+        tx.title.toLowerCase().includes(q) ||
+        tx.reference.toLowerCase().includes(q) ||
+        tx.channel.toLowerCase().includes(q) ||
+        ownerLabel.toLowerCase().includes(q)
+      );
+    });
+  }, [props.transactions, props.users, auditSearch, auditCategory]);
 
   const handleEditPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!editingUser) return;
@@ -320,6 +406,16 @@ export function AdminDashboard(props: AdminDashboardProps) {
                     </button>
                     <button
                       type="button"
+                      onClick={() => handleSelectSection('services_crypto')}
+                      className="w-full px-4 py-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg flex items-center justify-between"
+                    >
+                      <span>Airtime / Internet &amp; USDT / Binance Queue</span>
+                      <span className="font-mono font-semibold text-[#071B38]">
+                        {pendingAirtime + pendingUsdt}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => handleSelectSection('loans_withdrawals')}
                       className="w-full px-4 py-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg flex items-center justify-between"
                     >
@@ -336,10 +432,10 @@ export function AdminDashboard(props: AdminDashboardProps) {
                     <p className="text-xs font-semibold text-emerald-300">System Parameters</p>
                     <h2 className="font-display text-xl font-bold mt-1">Active E-Finance Rwanda Rules</h2>
                     <div className="mt-4 space-y-1.5 text-xs text-slate-200 font-mono tabular-nums">
-                      <p>MoMo Pay Code: {props.settings.momoPayCode}*amount#</p>
+                      <p>MoMo Pay Code: {props.settings.momoPayCode}*amount# | 10% P2P Tax: {props.settings.sendMoneyTaxPercent ?? 10}%</p>
+                      <p>FX Rate: 1 USD = {formatRwf(props.settings.rwfPerUsdRate ?? 1380)} | 10% Tax Collected: {formatRwf(totalP2pTaxRwf)}</p>
                       <p>Activation Fee: {formatRwf(props.settings.activationFeeRwf)} | Bonus: {formatRwf(props.settings.welcomeBonusRwf)}</p>
                       <p>Daily Check-In: {formatRwf(props.settings.dailyCheckInRwf)} | Min Video: {formatRwf(props.settings.minVideoRewardRwf)}/view</p>
-                      <p>Withdrawal Fee: {props.settings.withdrawalFeePercent}%</p>
                     </div>
                   </div>
                   <button
@@ -377,11 +473,26 @@ export function AdminDashboard(props: AdminDashboardProps) {
                     <div key={u.id} className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                       <div className="flex items-start gap-4">
                         {u.photoDataUrl ? (
-                          <img
-                            src={u.photoDataUrl}
-                            alt={`${u.firstName} ${u.secondName}`}
-                            className="w-16 h-16 rounded-xl object-cover border border-slate-300 shrink-0"
-                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPreviewPhoto({
+                                url: u.photoDataUrl,
+                                caption: `${u.firstName} ${u.secondName} — Registration Photo`,
+                              })
+                            }
+                            className="group relative shrink-0"
+                            title="View full photo"
+                          >
+                            <img
+                              src={u.photoDataUrl}
+                              alt={`${u.firstName} ${u.secondName}`}
+                              className="w-16 h-16 rounded-xl object-cover border border-slate-300 group-hover:opacity-90"
+                            />
+                            <span className="absolute bottom-1 right-1 bg-slate-900/75 text-white p-0.5 rounded">
+                              <Eye className="w-3 h-3" />
+                            </span>
+                          </button>
                         ) : (
                           <div className="w-16 h-16 rounded-xl bg-slate-100 border border-slate-200 shrink-0" />
                         )}
@@ -410,6 +521,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
                           </p>
                           <p className="text-slate-600">
                             <strong>Birth:</strong> {u.residence.placeOfBirth}
+                            {u.residence.province ? ` · ${u.residence.province}` : ''}
                             {u.residence.akarere ? ` · Residence: ${u.residence.akarere} / ${u.residence.umurenge ?? '-'} / ${u.residence.akagari ?? '-'} / ${u.residence.umudugudu ?? '-'}` : ''}
                           </p>
                           {u.activationPaymentRef && (
@@ -418,7 +530,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
                             </p>
                           )}
                           <p className="font-mono text-slate-800 tabular-nums">
-                            Wallet: <strong>{formatRwf(u.walletBalanceRwf)}</strong> · Saved: <strong>{formatRwf(u.savingsBalanceRwf)}</strong> · KYC: {u.kycStatus}
+                            Wallet: <strong>{formatRwf(u.walletBalanceRwf)}</strong> · Saved: <strong>{formatRwf(u.savingsBalanceRwf)}</strong> · USDT: <strong>{formatUsdt(u.usdtBalance ?? 0)}</strong> · KYC: {u.kycStatus}
                           </p>
                         </div>
                       </div>
@@ -456,11 +568,19 @@ export function AdminDashboard(props: AdminDashboardProps) {
                           <button
                             type="button"
                             onClick={() => props.onToggleSuspendUser(u.id)}
-                            className="h-9 px-3 border border-slate-300 bg-white hover:bg-red-50 text-xs font-semibold rounded-lg text-slate-700"
+                            className="h-9 px-3 border border-slate-300 bg-white hover:bg-amber-50 text-xs font-semibold rounded-lg text-slate-700"
                           >
                             {u.accountStatus === 'suspended' ? 'Unsuspend' : 'Suspend'}
                           </button>
                         ) : null}
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteUser(u)}
+                          className="h-9 px-3 border border-red-200 bg-red-50 hover:bg-red-100 text-red-800 text-xs font-semibold rounded-lg inline-flex items-center gap-1"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Delete</span>
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -488,21 +608,70 @@ export function AdminDashboard(props: AdminDashboardProps) {
                   {kycQueue.map((u) => (
                     <div key={u.id} className="p-6 space-y-4">
                       <div className="flex flex-wrap items-start justify-between gap-4">
-                        <div className="flex items-start gap-4">
-                          <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex flex-col sm:flex-row items-start gap-4">
+                          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
                             {u.kycData?.idDocumentPhotoDataUrl && (
-                              <img
-                                src={u.kycData.idDocumentPhotoDataUrl}
-                                alt="Rwanda National ID document"
-                                className="w-24 h-18 rounded-lg object-cover border border-slate-300"
-                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPreviewPhoto({
+                                    url: u.kycData!.idDocumentPhotoDataUrl,
+                                    caption: `${u.firstName} ${u.secondName} — Rwanda National ID Photo`,
+                                  })
+                                }
+                                className="group text-left"
+                              >
+                                <img
+                                  src={u.kycData.idDocumentPhotoDataUrl}
+                                  alt="Rwanda National ID document"
+                                  className="w-28 h-20 rounded-lg object-cover border border-slate-300 group-hover:ring-2 group-hover:ring-blue-600"
+                                />
+                                <span className="block text-[10px] font-semibold text-blue-800 mt-1 text-center">
+                                  Click: National ID
+                                </span>
+                              </button>
                             )}
                             {u.kycData?.selfiePhotoDataUrl && (
-                              <img
-                                src={u.kycData.selfiePhotoDataUrl}
-                                alt="Member KYC selfie"
-                                className="w-18 h-18 rounded-lg object-cover border border-slate-300"
-                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPreviewPhoto({
+                                    url: u.kycData!.selfiePhotoDataUrl!,
+                                    caption: `${u.firstName} ${u.secondName} — KYC Selfie Proof`,
+                                  })
+                                }
+                                className="group text-left"
+                              >
+                                <img
+                                  src={u.kycData.selfiePhotoDataUrl}
+                                  alt="Member KYC selfie"
+                                  className="w-20 h-20 rounded-lg object-cover border border-slate-300 group-hover:ring-2 group-hover:ring-blue-600"
+                                />
+                                <span className="block text-[10px] font-semibold text-blue-800 mt-1 text-center">
+                                  Click: KYC Selfie
+                                </span>
+                              </button>
+                            )}
+                            {u.photoDataUrl && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPreviewPhoto({
+                                    url: u.photoDataUrl,
+                                    caption: `${u.firstName} ${u.secondName} — Profile Photo`,
+                                  })
+                                }
+                                className="group text-left"
+                              >
+                                <img
+                                  src={u.photoDataUrl}
+                                  alt="Member profile"
+                                  className="w-20 h-20 rounded-lg object-cover border border-slate-300 group-hover:ring-2 group-hover:ring-blue-600"
+                                />
+                                <span className="block text-[10px] font-semibold text-blue-800 mt-1 text-center">
+                                  Click: Profile Photo
+                                </span>
+                              </button>
                             )}
                           </div>
                           <div className="text-xs space-y-1">
@@ -563,9 +732,575 @@ export function AdminDashboard(props: AdminDashboardProps) {
             </div>
           )}
 
-          {/* 4. Videos & Tasks Moderation */}
+          {/* New Section: Airtime/Internet & USDT/Binance Approval Desk */}
+          {section === 'services_crypto' && (
+            <div className="space-y-6">
+              <section className="bg-white/95 border border-slate-200 rounded-xl overflow-hidden">
+                <div className="px-6 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h2 className="text-base font-semibold text-slate-900">
+                      Airtime &amp; Internet Bundle Orders (MTN &amp; Airtel)
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Approve after sending airtime/data to the user phone number, or reject to refund their RWF wallet.
+                    </p>
+                  </div>
+                  <span className="font-mono text-xs text-slate-500">
+                    {pendingAirtime} pending
+                  </span>
+                </div>
+                {props.airtimeRequests.length === 0 ? (
+                  <div className="p-8 text-center text-sm text-slate-500">
+                    No airtime or internet bundle orders yet.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-200">
+                    {props.airtimeRequests.map((req) => (
+                      <div key={req.id} className="p-5 flex flex-wrap items-center justify-between gap-4">
+                        <div className="space-y-1">
+                          <h3 className="text-sm font-semibold text-slate-900">
+                            {req.userName} · {req.network} {req.serviceType}
+                            {req.bundleLabel ? ` (${req.bundleLabel})` : ''}
+                          </h3>
+                          <p className="text-xs font-mono text-slate-600">
+                            Phone: <strong>{req.phoneNumber}</strong> · Amount:{' '}
+                            <strong className="text-[#071B38]">{formatRwf(req.amountRwf)}</strong>
+                          </p>
+                          <p className="text-[11px] font-mono text-slate-400">
+                            {formatDateTime(req.createdAt)}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <StatusLabel
+                            label={req.status}
+                            tone={
+                              req.status === 'approved'
+                                ? 'success'
+                                : req.status === 'rejected'
+                                  ? 'danger'
+                                  : 'warning'
+                            }
+                          />
+                          {req.status === 'pending_admin' && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => props.onReviewAirtime(req.id, 'approved')}
+                                className="h-8 px-3 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-md"
+                              >
+                                Accept &amp; Mark Delivered
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => props.onReviewAirtime(req.id, 'rejected')}
+                                className="h-8 px-3 bg-red-50 border border-red-200 text-red-800 text-xs font-semibold rounded-md"
+                              >
+                                Reject &amp; Refund
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section className="bg-white/95 border border-slate-200 rounded-xl overflow-hidden">
+                <div className="px-6 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h2 className="text-base font-semibold text-slate-900">
+                      USDT Deposits, Withdrawals &amp; Send to Binance Requests
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Approve USDT deposits to credit user USDT balances, or approve Binance sends &amp; USDT withdrawals after sending.
+                    </p>
+                  </div>
+                  <span className="font-mono text-xs text-slate-500">
+                    {pendingUsdt} pending
+                  </span>
+                </div>
+                {props.usdtRequests.length === 0 ? (
+                  <div className="p-8 text-center text-sm text-slate-500">
+                    No USDT or Binance requests yet.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-200">
+                    {props.usdtRequests.map((req) => (
+                      <div key={req.id} className="p-5 flex flex-wrap items-center justify-between gap-4">
+                        <div className="space-y-1 min-w-0">
+                          <h3 className="text-sm font-semibold text-slate-900">
+                            {req.userName} ·{' '}
+                            {req.actionType === 'deposit'
+                              ? 'USDT Deposit'
+                              : req.actionType === 'send_binance'
+                                ? 'Send USDT to Binance'
+                                : 'Withdraw USDT'}{' '}
+                            · <span className="font-mono text-emerald-700">{formatUsdt(req.amountUsdt)}</span>
+                          </h3>
+                          <p className="text-xs font-mono text-slate-600 break-all">
+                            {req.network} · Ref/Address: <strong>{req.destinationOrTxRef}</strong>
+                          </p>
+                          <p className="text-[11px] font-mono text-slate-400">
+                            {formatDateTime(req.createdAt)} {req.note ? `· Note: ${req.note}` : ''}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                          <StatusLabel
+                            label={req.status}
+                            tone={
+                              req.status === 'approved'
+                                ? 'success'
+                                : req.status === 'rejected'
+                                  ? 'danger'
+                                  : 'warning'
+                            }
+                          />
+                          {req.status === 'pending_admin' && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => props.onReviewUsdtRequest(req.id, 'approved')}
+                                className="h-8 px-3 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-md"
+                              >
+                                {req.actionType === 'deposit'
+                                  ? 'Verify & Credit USDT'
+                                  : req.actionType === 'send_binance'
+                                    ? 'Approve After Binance Send'
+                                    : 'Approve USDT Withdrawal'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => props.onReviewUsdtRequest(req.id, 'rejected')}
+                                className="h-8 px-3 bg-red-50 border border-red-200 text-red-800 text-xs font-semibold rounded-md"
+                              >
+                                {req.actionType === 'deposit' ? 'Reject' : 'Reject & Refund USDT'}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </div>
+          )}
+
+          {/* New Section: Transactions Audit, 10% P2P System Tax & FX/Bet Overview */}
+          {section === 'transactions_audit' && (
+            <div className="space-y-6">
+              <div className="bg-white/95 border border-slate-200 rounded-xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-slate-200">
+                <div className="p-5">
+                  <p className="text-xs text-slate-500">10% Send Money Tax Collected</p>
+                  <p className="font-mono text-2xl font-semibold text-emerald-700 mt-1 tabular-nums">
+                    {formatRwf(totalP2pTaxRwf)}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {props.p2pTransfers.length} P2P transfers
+                  </p>
+                </div>
+                <div className="p-5">
+                  <p className="text-xs text-slate-500">Total P2P Transfer Volume</p>
+                  <p className="font-mono text-2xl font-semibold text-[#071B38] mt-1 tabular-nums">
+                    {formatRwf(totalP2pVolumeRwf)}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-0.5">Address-to-address RWF</p>
+                </div>
+                <div className="p-5">
+                  <p className="text-xs text-slate-500">10s Quiz Bet Volume</p>
+                  <p className="font-mono text-2xl font-semibold text-slate-900 mt-1 tabular-nums">
+                    {formatRwf(props.betSessions.reduce((s, b) => s + b.stakeRwf, 0))}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {props.betSessions.length} rounds ({formatRwf(props.betSessions.reduce((s, b) => s + b.payoutRwf, 0))} paid out)
+                  </p>
+                </div>
+                <div className="p-5">
+                  <p className="text-xs text-slate-500">All Ledger Transactions</p>
+                  <p className="font-mono text-2xl font-semibold text-blue-800 mt-1 tabular-nums">
+                    {props.transactions.length}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {props.fxExchanges.length} FX conversions
+                  </p>
+                </div>
+              </div>
+
+              {/* P2P Transfers & 10% Tax Table */}
+              <section className="bg-white/95 border border-slate-200 rounded-xl overflow-hidden">
+                <div className="px-6 py-4 border-b border-slate-200">
+                  <h2 className="text-base font-semibold text-slate-900">
+                    P2P Send Money Ledger &amp; {props.settings.sendMoneyTaxPercent ?? 10}% System Tax
+                  </h2>
+                </div>
+                {props.p2pTransfers.length === 0 ? (
+                  <div className="p-8 text-center text-sm text-slate-500">
+                    No user-to-user transfers recorded yet.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-slate-500">
+                          <th className="py-2.5 px-4">Sender</th>
+                          <th className="py-2.5 px-4">Receiver</th>
+                          <th className="py-2.5 px-4 text-right">Gross Sent</th>
+                          <th className="py-2.5 px-4 text-right">System Tax</th>
+                          <th className="py-2.5 px-4 text-right">Net Delivered</th>
+                          <th className="py-2.5 px-4">Date</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {props.p2pTransfers.map((tr) => (
+                          <tr key={tr.id}>
+                            <td className="py-3 px-4">
+                              <p className="font-semibold text-slate-900">{tr.senderName}</p>
+                              <p className="font-mono text-[11px] text-slate-500">{tr.senderAddress}</p>
+                            </td>
+                            <td className="py-3 px-4">
+                              <p className="font-semibold text-slate-900">{tr.receiverName}</p>
+                              <p className="font-mono text-[11px] text-slate-500">{tr.receiverAddress}</p>
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono tabular-nums">
+                              {formatRwf(tr.grossAmountRwf)}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono font-semibold text-emerald-700 tabular-nums">
+                              +{formatRwf(tr.taxRwf)} ({tr.taxPercent}%)
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono font-semibold text-slate-900 tabular-nums">
+                              {formatRwf(tr.netAmountRwf)}
+                            </td>
+                            <td className="py-3 px-4 font-mono text-slate-500 tabular-nums">
+                              {formatDateTime(tr.createdAt)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              {/* All Platform Transactions */}
+              <section className="bg-white/95 border border-slate-200 rounded-xl overflow-hidden">
+                <div className="px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <h2 className="text-base font-semibold text-slate-900">
+                    All Member Transactions History
+                  </h2>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={auditCategory}
+                      onChange={(e) => setAuditCategory(e.target.value)}
+                      className="h-9 px-2.5 text-xs bg-white border border-slate-300 rounded-lg"
+                    >
+                      {[
+                        'All',
+                        'Transfer Sent',
+                        'Transfer Received',
+                        'Airtime & Data',
+                        'Quiz Bet',
+                        'Quiz Win',
+                        'Currency Exchange',
+                        'USDT Deposit',
+                        'USDT Savings',
+                        'USDT Send / Withdraw',
+                        'Withdrawal',
+                        'Savings',
+                        'Loan',
+                        'Bonus',
+                        'Check-In',
+                        'Video Reward',
+                        'Task Reward',
+                      ].map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="search"
+                        value={auditSearch}
+                        onChange={(e) => setAuditSearch(e.target.value)}
+                        placeholder="Search member or ref..."
+                        className="h-9 pl-8 pr-3 text-xs bg-white border border-slate-300 rounded-lg"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {filteredTransactions.length === 0 ? (
+                  <div className="p-8 text-center text-sm text-slate-500">
+                    No matching transactions found.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-slate-500">
+                          <th className="py-2.5 px-4">Member</th>
+                          <th className="py-2.5 px-4">Reference</th>
+                          <th className="py-2.5 px-4">Operation</th>
+                          <th className="py-2.5 px-4">Category</th>
+                          <th className="py-2.5 px-4">Status</th>
+                          <th className="py-2.5 px-4 text-right">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {filteredTransactions.slice(0, 100).map((tx) => {
+                          const owner = props.users.find((u) => u.id === tx.userId);
+                          return (
+                            <tr key={tx.id}>
+                              <td className="py-3 px-4 font-medium text-slate-900">
+                                {owner ? `${owner.firstName} ${owner.secondName}` : tx.userId}
+                              </td>
+                              <td className="py-3 px-4 font-mono text-slate-600">{tx.reference}</td>
+                              <td className="py-3 px-4">
+                                <p className="font-medium text-slate-900">{tx.title}</p>
+                                <p className="text-[11px] text-slate-500">{tx.channel}</p>
+                              </td>
+                              <td className="py-3 px-4 text-slate-600">{tx.category}</td>
+                              <td className="py-3 px-4">
+                                <StatusLabel
+                                  label={tx.status}
+                                  tone={
+                                    tx.status === 'Completed'
+                                      ? 'success'
+                                      : tx.status === 'Rejected'
+                                        ? 'danger'
+                                        : 'warning'
+                                  }
+                                />
+                              </td>
+                              <td
+                                className={`py-3 px-4 text-right font-mono font-semibold tabular-nums ${
+                                  tx.direction === 'credit' ? 'text-emerald-700' : 'text-slate-900'
+                                }`}
+                              >
+                                {tx.direction === 'credit' ? '+' : '-'}
+                                {formatRwf(tx.amountRwf)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            </div>
+          )}
+
+          {/* 4. Videos & Tasks Moderation + Admin Direct Publishing */}
           {section === 'videos_tasks' && (
             <div className="space-y-6">
+              {/* Admin Direct Create Video & Task Forms */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <section className="bg-white/95 border border-slate-200 rounded-xl p-6 space-y-3.5">
+                  <div className="pb-3 border-b border-slate-200 flex items-center justify-between">
+                    <div>
+                      <h2 className="text-base font-semibold text-slate-900">
+                        Admin Publish Short Video (Instant Active)
+                      </h2>
+                      <p className="text-xs text-slate-500">
+                        Directly add a watch-to-earn short video for all members.
+                      </p>
+                    </div>
+                    <PlusCircle className="w-5 h-5 text-blue-800" />
+                  </div>
+
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (!vidUrl.trim() || vidTitle.trim().length < 3) return;
+                      props.onAdminCreateVideoCampaign({
+                        title: vidTitle.trim(),
+                        description: vidDesc.trim() || 'Official E-Finance Rwanda video campaign',
+                        videoUrl: vidUrl.trim(),
+                        rewardPerViewRwf: Math.max(props.settings.minVideoRewardRwf, Number(vidReward) || 50),
+                        targetViewers: Math.max(1, Number(vidTarget) || 20),
+                      });
+                      setVidTitle('');
+                      setVidDesc('');
+                      setVidUrl('');
+                      setVidFileName('');
+                      setVidNotice('Short video published immediately as active!');
+                      setTimeout(() => setVidNotice(null), 3000);
+                    }}
+                    className="space-y-3"
+                  >
+                    <input
+                      type="text"
+                      value={vidTitle}
+                      onChange={(e) => setVidTitle(e.target.value)}
+                      placeholder="Video Title *"
+                      required
+                      className="w-full h-10 px-3 text-sm bg-white border border-slate-300 rounded-lg"
+                    />
+                    <input
+                      type="text"
+                      value={vidDesc}
+                      onChange={(e) => setVidDesc(e.target.value)}
+                      placeholder="Short description..."
+                      className="w-full h-10 px-3 text-sm bg-white border border-slate-300 rounded-lg"
+                    />
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        value={vidUrl.startsWith('data:') ? '' : vidUrl}
+                        onChange={(e) => {
+                          setVidUrl(e.target.value);
+                          setVidFileName('');
+                        }}
+                        placeholder="Paste MP4 Video URL or upload file →"
+                        className="flex-1 h-10 px-3 text-xs font-mono bg-white border border-slate-300 rounded-lg"
+                      />
+                      <label className="cursor-pointer h-10 px-3 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 shrink-0">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>{vidFileName ? 'Video Ready' : 'Upload File'}</span>
+                        <input
+                          type="file"
+                          accept="video/*"
+                          onChange={async (e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            try {
+                              const dataUrl = await readFileAsDataUrl(f, 4);
+                              setVidUrl(dataUrl);
+                              setVidFileName(f.name);
+                            } catch {
+                              // ignore oversized
+                            }
+                          }}
+                          className="sr-only"
+                        />
+                      </label>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] text-slate-600 mb-1">
+                          Reward / View (Min {props.settings.minVideoRewardRwf} RWF)
+                        </label>
+                        <input
+                          type="number"
+                          min={props.settings.minVideoRewardRwf}
+                          value={vidReward}
+                          onChange={(e) => setVidReward(e.target.value)}
+                          required
+                          className="w-full h-9 px-3 text-xs font-mono border border-slate-300 rounded-lg"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-slate-600 mb-1">
+                          Target Viewers
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={vidTarget}
+                          onChange={(e) => setVidTarget(e.target.value)}
+                          required
+                          className="w-full h-9 px-3 text-xs font-mono border border-slate-300 rounded-lg"
+                        />
+                      </div>
+                    </div>
+                    {vidNotice && <p className="text-xs font-semibold text-emerald-700">{vidNotice}</p>}
+                    <button
+                      type="submit"
+                      className="w-full h-10 bg-[#071B38] hover:bg-[#0c2954] text-white text-xs font-semibold rounded-lg"
+                    >
+                      Publish Active Video Now
+                    </button>
+                  </form>
+                </section>
+
+                <section className="bg-white/95 border border-slate-200 rounded-xl p-6 space-y-3.5">
+                  <div className="pb-3 border-b border-slate-200 flex items-center justify-between">
+                    <div>
+                      <h2 className="text-base font-semibold text-slate-900">
+                        Admin Publish Paid Task (Instant Active)
+                      </h2>
+                      <p className="text-xs text-slate-500">
+                        Directly create a task with requirements for members to complete.
+                      </p>
+                    </div>
+                    <PlusCircle className="w-5 h-5 text-emerald-700" />
+                  </div>
+
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (tskTitle.trim().length < 3 || tskReqs.trim().length < 5) return;
+                      props.onAdminCreateCustomTask({
+                        title: tskTitle.trim(),
+                        requirements: tskReqs.trim(),
+                        rewardPerCompletionRwf: Math.max(20, Number(tskReward) || 50),
+                        targetCompletions: Math.max(1, Number(tskTarget) || 20),
+                      });
+                      setTskTitle('');
+                      setTskReqs('');
+                      setTskNotice('Paid task published immediately as active!');
+                      setTimeout(() => setTskNotice(null), 3000);
+                    }}
+                    className="space-y-3"
+                  >
+                    <input
+                      type="text"
+                      value={tskTitle}
+                      onChange={(e) => setTskTitle(e.target.value)}
+                      placeholder="Task Title *"
+                      required
+                      className="w-full h-10 px-3 text-sm bg-white border border-slate-300 rounded-lg"
+                    />
+                    <textarea
+                      rows={3}
+                      value={tskReqs}
+                      onChange={(e) => setTskReqs(e.target.value)}
+                      placeholder="Exact requirements members must prove..."
+                      required
+                      className="w-full p-3 text-xs bg-white border border-slate-300 rounded-lg"
+                    />
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] text-slate-600 mb-1">
+                          Reward / Completion (RWF)
+                        </label>
+                        <input
+                          type="number"
+                          min={20}
+                          value={tskReward}
+                          onChange={(e) => setTskReward(e.target.value)}
+                          required
+                          className="w-full h-9 px-3 text-xs font-mono border border-slate-300 rounded-lg"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-slate-600 mb-1">
+                          Target Completions
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={tskTarget}
+                          onChange={(e) => setTskTarget(e.target.value)}
+                          required
+                          className="w-full h-9 px-3 text-xs font-mono border border-slate-300 rounded-lg"
+                        />
+                      </div>
+                    </div>
+                    {tskNotice && <p className="text-xs font-semibold text-emerald-700">{tskNotice}</p>}
+                    <button
+                      type="submit"
+                      className="w-full h-10 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-lg"
+                    >
+                      Publish Active Task Now
+                    </button>
+                  </form>
+                </section>
+              </div>
+
               {/* Task Submissions Requiring Admin Verification */}
               <section className="bg-white/95 border border-slate-200 rounded-xl overflow-hidden">
                 <div className="px-6 py-4 border-b border-slate-200">
@@ -1161,6 +1896,41 @@ export function AdminDashboard(props: AdminDashboardProps) {
                       className="w-full h-10 px-3 text-sm font-mono bg-white border border-slate-300 rounded-lg"
                     />
                   </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
+                      Send Money System Tax (%)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={50}
+                      value={settingsDraft.sendMoneyTaxPercent ?? 10}
+                      onChange={(e) =>
+                        setSettingsDraft({
+                          ...settingsDraft,
+                          sendMoneyTaxPercent: Number(e.target.value) || 0,
+                        })
+                      }
+                      className="w-full h-10 px-3 text-sm font-mono bg-white border border-slate-300 rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
+                      FX Rate (RWF per 1 USD)
+                    </label>
+                    <input
+                      type="number"
+                      min={100}
+                      value={settingsDraft.rwfPerUsdRate ?? 1380}
+                      onChange={(e) =>
+                        setSettingsDraft({
+                          ...settingsDraft,
+                          rwfPerUsdRate: Number(e.target.value) || 1380,
+                        })
+                      }
+                      className="w-full h-10 px-3 text-sm font-mono bg-white border border-slate-300 rounded-lg"
+                    />
+                  </div>
                   <div className="flex items-center pt-5">
                     <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
                       <input
@@ -1174,6 +1944,20 @@ export function AdminDashboard(props: AdminDashboardProps) {
                       <span>Enable System Maintenance Mode</span>
                     </label>
                   </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    E-Finance Binance / USDT Deposit Address (Shown to Members)
+                  </label>
+                  <input
+                    type="text"
+                    value={settingsDraft.binanceDepositAddress ?? ''}
+                    onChange={(e) =>
+                      setSettingsDraft({ ...settingsDraft, binanceDepositAddress: e.target.value })
+                    }
+                    className="w-full h-10 px-3 text-xs font-mono bg-white border border-slate-300 rounded-lg"
+                  />
                 </div>
 
                 <div>
@@ -1379,6 +2163,81 @@ export function AdminDashboard(props: AdminDashboardProps) {
               >
                 Save Changes
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete User Confirmation Modal */}
+      {confirmDeleteUser && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="bg-white border border-slate-200 rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <h2 className="font-display text-lg font-bold text-red-800">
+              Delete Member Account?
+            </h2>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Are you sure you want to permanently delete{' '}
+              <strong>
+                {confirmDeleteUser.firstName} {confirmDeleteUser.secondName}
+              </strong>{' '}
+              ({confirmDeleteUser.accountNumber}) and their associated platform records? This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteUser(null)}
+                className="h-9 px-4 border border-slate-300 rounded-lg text-xs font-semibold text-slate-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  props.onDeleteUser(confirmDeleteUser.id);
+                  setConfirmDeleteUser(null);
+                }}
+                className="h-9 px-4 bg-red-700 hover:bg-red-800 text-white rounded-lg text-xs font-semibold"
+              >
+                Delete Permanently
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Full-Resolution Photo Lightbox Modal (KYC & Member Photos) */}
+      {previewPhoto && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setPreviewPhoto(null)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-2xl w-full p-4 space-y-3 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-200">
+              <p className="text-sm font-bold text-[#071B38]">{previewPhoto.caption}</p>
+              <button
+                type="button"
+                onClick={() => setPreviewPhoto(null)}
+                aria-label="Close photo preview"
+                className="w-8 h-8 inline-flex items-center justify-center rounded-lg hover:bg-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex items-center justify-center bg-slate-100 rounded-xl overflow-hidden max-h-[75vh]">
+              <img
+                src={previewPhoto.url}
+                alt={previewPhoto.caption}
+                className="max-h-[72vh] w-auto object-contain"
+              />
             </div>
           </div>
         </div>

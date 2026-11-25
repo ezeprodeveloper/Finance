@@ -1,10 +1,14 @@
 import React, { useState } from 'react';
-import { ArrowRight, X } from 'lucide-react';
+import { ArrowRight, Lock, X } from 'lucide-react';
 
 interface LoginModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onAuthenticate: (identifier: string, password: string) => Promise<string | null>;
+  onAuthenticate: (
+    identifier: string,
+    password: string,
+  ) => Promise<{ error: string | null; needsAdminSetup?: boolean }>;
+  onClaimAdminPassword: (email: string, password: string) => Promise<string | null>;
   onSwitchToRegister: () => void;
 }
 
@@ -12,10 +16,13 @@ export function LoginModal({
   isOpen,
   onClose,
   onAuthenticate,
+  onClaimAdminPassword,
   onSwitchToRegister,
 }: LoginModalProps) {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmAdminPass, setConfirmAdminPass] = useState('');
+  const [adminSetupMode, setAdminSetupMode] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -27,13 +34,41 @@ export function LoginModal({
     setLoading(true);
 
     try {
-      const authError = await onAuthenticate(identifier, password);
-      if (authError) {
-        setError(authError);
+      if (adminSetupMode) {
+        if (password.length < 6) {
+          setError('Choose a password with at least 6 characters.');
+          return;
+        }
+        if (password !== confirmAdminPass) {
+          setError('Passwords do not match.');
+          return;
+        }
+        const claimErr = await onClaimAdminPassword(identifier, password);
+        if (claimErr) {
+          setError(claimErr);
+          return;
+        }
+        setIdentifier('');
+        setPassword('');
+        setConfirmAdminPass('');
+        setAdminSetupMode(false);
+        return;
+      }
+
+      const result = await onAuthenticate(identifier, password);
+      if (result.needsAdminSetup) {
+        setAdminSetupMode(true);
+        setError(result.error);
+        return;
+      }
+      if (result.error) {
+        setError(result.error);
         return;
       }
       setIdentifier('');
       setPassword('');
+      setConfirmAdminPass('');
+      setAdminSetupMode(false);
     } finally {
       setLoading(false);
     }
@@ -49,7 +84,11 @@ export function LoginModal({
       <div className="relative w-full max-w-md bg-white border border-slate-200 rounded-xl p-6 sm:p-8 shadow-2xl">
         <button
           type="button"
-          onClick={onClose}
+          onClick={() => {
+            setAdminSetupMode(false);
+            setError(null);
+            onClose();
+          }}
           aria-label="Close sign in"
           className="absolute right-4 top-4 w-10 h-10 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100"
         >
@@ -59,10 +98,12 @@ export function LoginModal({
         <div className="mb-6">
           <p className="text-xs font-semibold text-blue-800">E-Finance Rwanda</p>
           <h2 id="login-modal-title" className="font-display text-2xl font-bold text-[#071B38] mt-1">
-            Sign in to your account
+            {adminSetupMode ? 'First-Run Admin Security Setup' : 'Sign in to your account'}
           </h2>
           <p className="text-xs text-slate-600 mt-1">
-            Enter your registered email or phone number and password to access your E-Finance workspace.
+            {adminSetupMode
+              ? 'Set and lock your server-side administrator password for this deployment.'
+              : 'Enter your registered email or phone number and password to access your E-Finance workspace.'}
           </p>
         </div>
 
@@ -75,16 +116,20 @@ export function LoginModal({
               id="login-id"
               type="text"
               value={identifier}
-              onChange={(e) => setIdentifier(e.target.value)}
+              onChange={(e) => {
+                setIdentifier(e.target.value);
+                if (adminSetupMode) setAdminSetupMode(false);
+              }}
               placeholder="name@example.com"
               required
+              readOnly={adminSetupMode}
               className="w-full h-11 px-3.5 text-sm bg-white border border-slate-300 rounded-lg text-slate-900"
             />
           </div>
 
           <div>
             <label htmlFor="login-pass" className="block text-xs font-medium text-slate-700 mb-1.5">
-              Password
+              {adminSetupMode ? 'Create Admin Password' : 'Password'}
             </label>
             <input
               id="login-pass"
@@ -97,6 +142,23 @@ export function LoginModal({
             />
           </div>
 
+          {adminSetupMode && (
+            <div>
+              <label htmlFor="login-pass-confirm" className="block text-xs font-medium text-slate-700 mb-1.5">
+                Confirm Admin Password
+              </label>
+              <input
+                id="login-pass-confirm"
+                type="password"
+                value={confirmAdminPass}
+                onChange={(e) => setConfirmAdminPass(e.target.value)}
+                placeholder="Repeat password"
+                required
+                className="w-full h-11 px-3.5 text-sm bg-white border border-slate-300 rounded-lg text-slate-900"
+              />
+            </div>
+          )}
+
           {error && (
             <p className="text-xs font-medium text-red-800 bg-red-50 border border-red-200 rounded-lg px-3.5 py-2.5">
               {error}
@@ -108,7 +170,14 @@ export function LoginModal({
             disabled={loading}
             className="w-full h-11 px-5 bg-[#071B38] hover:bg-[#0c2954] disabled:opacity-60 text-white text-sm font-semibold rounded-lg inline-flex items-center justify-center gap-2 transition-colors"
           >
-            <span>{loading ? 'Verifying...' : 'Sign In'}</span>
+            {adminSetupMode && <Lock className="w-4 h-4" />}
+            <span>
+              {loading
+                ? 'Verifying...'
+                : adminSetupMode
+                  ? 'Save Password & Enter Workspace'
+                  : 'Sign In'}
+            </span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>

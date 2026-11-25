@@ -230,12 +230,14 @@ export function UserKycView({ user, onSubmitKyc }: UserKycViewProps) {
           </div>
 
           <RwandaLocationSelector
+            province={province}
             akarere={akarere}
             umurenge={umurenge}
             akagari={akagari}
             umudugudu={umudugudu}
             required
             onChange={(loc) => {
+              setProvince(loc.province);
               setAkarere(loc.akarere);
               setUmurenge(loc.umurenge);
               setAkagari(loc.akagari);
@@ -596,6 +598,7 @@ export function UserSavingsView({
 interface UserLoansViewProps {
   user: RegisteredUser;
   loans: LoanRequest[];
+  onGoToSavings?: () => void;
   onRequestLoan: (payload: {
     product: string;
     reason: string;
@@ -611,6 +614,7 @@ interface UserLoansViewProps {
 export function UserLoansView({
   user,
   loans,
+  onGoToSavings,
   onRequestLoan,
   onRepayLoan,
 }: UserLoansViewProps) {
@@ -623,6 +627,7 @@ export function UserLoansView({
 
   const annualRate = 12;
   const principalNum = Math.max(1000, Number(principal) || 1000);
+  const meetsSavingsRequirement = user.savingsBalanceRwf > principalNum;
 
   const calc = useMemo(() => {
     const totalRepayable = Math.round(principalNum * (1 + (annualRate / 100) * (termMonths / 12)));
@@ -633,6 +638,13 @@ export function UserLoansView({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setNotice(null);
+    if (user.savingsBalanceRwf <= principalNum) {
+      setError(
+        `Your Savings Vault balance (${formatRwf(user.savingsBalanceRwf)}) must be strictly greater than your requested loan amount (${formatRwf(principalNum)}).`,
+      );
+      return;
+    }
     if (reason.trim().length < 5) {
       setError('State the purpose of your loan request.');
       return;
@@ -658,6 +670,27 @@ export function UserLoansView({
         <h2 className="text-base font-semibold text-slate-900 pb-3 border-b border-slate-200">
           Request / Borrow money from E-Finance
         </h2>
+        <div
+          className={`mt-4 px-3.5 py-2.5 rounded-lg border text-xs flex flex-wrap items-center justify-between gap-2 ${
+            meetsSavingsRequirement
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+              : 'bg-amber-50 border-amber-200 text-amber-900'
+          }`}
+        >
+          <div>
+            <span className="font-semibold">Eligibility Rule:</span> Your Savings Vault balance (
+            <strong className="font-mono tabular-nums">{formatRwf(user.savingsBalanceRwf)}</strong>) must be greater than your requested loan.
+          </div>
+          {!meetsSavingsRequirement && onGoToSavings && (
+            <button
+              type="button"
+              onClick={onGoToSavings}
+              className="font-semibold text-blue-800 hover:underline shrink-0"
+            >
+              Go to Save Money →
+            </button>
+          )}
+        </div>
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
           <div>
             <label htmlFor="ln-prod" className="block text-xs font-medium text-slate-700 mb-1">
@@ -742,9 +775,12 @@ export function UserLoansView({
 
           <button
             type="submit"
-            className="w-full h-10 bg-[#071B38] hover:bg-[#0c2954] text-white text-sm font-semibold rounded-lg"
+            disabled={!meetsSavingsRequirement}
+            className="w-full h-10 bg-[#071B38] hover:bg-[#0c2954] disabled:opacity-45 text-white text-sm font-semibold rounded-lg"
           >
-            Submit Loan Request
+            {meetsSavingsRequirement
+              ? 'Submit Loan Request'
+              : 'Increase Savings Above Requested Loan'}
           </button>
         </form>
       </section>

@@ -20,6 +20,7 @@ export interface EducationDetails {
 
 export interface ResidenceDetails {
   placeOfBirth: string;
+  province?: string;
   akarere?: string;
   umurenge?: string;
   akagari?: string;
@@ -67,6 +68,9 @@ export interface RegisteredUser {
   walletBalanceRwf: number;
   bonusBalanceRwf: number;
   savingsBalanceRwf: number;
+  walletBalanceUsd?: number;
+  usdtBalance?: number;
+  usdtSavingsBalance?: number;
   lastCheckInAt: string | null;
   checkInStreak: number;
   kycStatus: KycStatus;
@@ -197,6 +201,88 @@ export interface TaskSubmission {
   reviewedAt?: string;
 }
 
+export type QuizCategory = 'math' | 'physics' | 'world' | 'mixed';
+
+export interface BetSession {
+  id: string;
+  userId: string;
+  userName: string;
+  category: QuizCategory;
+  stakeRwf: number;
+  questionsAnswered: number;
+  multiplier: number;
+  payoutRwf: number;
+  status: 'won_cashed_out' | 'lost';
+  endedReason: string;
+  createdAt: string;
+}
+
+export interface AirtimeRequest {
+  id: string;
+  userId: string;
+  userName: string;
+  network: 'MTN Rwanda' | 'Airtel Rwanda';
+  serviceType: 'Airtime' | 'Internet Bundle';
+  phoneNumber: string;
+  amountRwf: number;
+  bundleLabel?: string;
+  status: 'pending_admin' | 'approved' | 'rejected';
+  adminNote?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface P2PTransfer {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderAddress: string;
+  receiverId: string;
+  receiverName: string;
+  receiverAddress: string;
+  grossAmountRwf: number;
+  taxPercent: number;
+  taxRwf: number;
+  netAmountRwf: number;
+  note?: string;
+  status: 'completed';
+  claimedByReceiver: boolean;
+  createdAt: string;
+}
+
+export interface FxExchangeRecord {
+  id: string;
+  userId: string;
+  userName: string;
+  direction: 'RWF_TO_USD' | 'USD_TO_RWF' | 'USD_TO_USDT' | 'USDT_TO_USD';
+  fromAmount: number;
+  toAmount: number;
+  rateApplied: number;
+  createdAt: string;
+}
+
+export interface UsdtRequest {
+  id: string;
+  userId: string;
+  userName: string;
+  actionType: 'deposit' | 'withdraw' | 'send_binance';
+  amountUsdt: number;
+  network: 'BEP20 (BSC)' | 'TRC20 (Tron)' | 'ERC20' | 'Binance Pay';
+  destinationOrTxRef: string;
+  note?: string;
+  status: 'pending_admin' | 'approved' | 'rejected';
+  adminNote?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface WalletAddressRecord {
+  address: string;
+  userId: string;
+  fullName: string;
+  createdAt: string;
+}
+
 export interface TransactionRecord {
   id: string;
   userId: string;
@@ -216,6 +302,15 @@ export interface TransactionRecord {
     | 'Investment Deposit'
     | 'Spin Win'
     | 'Referral Commission'
+    | 'Quiz Bet'
+    | 'Quiz Win'
+    | 'Airtime & Data'
+    | 'Transfer Sent'
+    | 'Transfer Received'
+    | 'Currency Exchange'
+    | 'USDT Deposit'
+    | 'USDT Savings'
+    | 'USDT Send / Withdraw'
     | 'Admin Adjustment';
   channel: string;
   amountRwf: number;
@@ -244,6 +339,9 @@ export interface SystemSettings {
   referralCommissionPercent: number;
   minVideoRewardRwf: number;
   momoPayCode: string;
+  sendMoneyTaxPercent: number;
+  rwfPerUsdRate: number;
+  binanceDepositAddress: string;
   platformTagline: string;
   maintenanceMode: boolean;
 }
@@ -255,11 +353,15 @@ export type SessionRole =
 
 export type UserPortalSection =
   | 'overview'
+  | 'invest'
+  | 'spin'
+  | 'quiz_bet'
+  | 'airtime'
+  | 'send_money'
+  | 'exchange_usdt'
   | 'kyc'
   | 'savings'
   | 'loans'
-  | 'invest'
-  | 'spin'
   | 'withdrawals'
   | 'videos'
   | 'tasks'
@@ -272,6 +374,8 @@ export type AdminPortalSection =
   | 'kyc'
   | 'videos_tasks'
   | 'loans_withdrawals'
+  | 'services_crypto'
+  | 'transactions_audit'
   | 'promotions'
   | 'settings';
 
@@ -285,6 +389,11 @@ export interface PlatformStoreState {
   videoCampaigns: ShortVideoCampaign[];
   customTasks: CustomTask[];
   taskSubmissions: TaskSubmission[];
+  betSessions: BetSession[];
+  airtimeRequests: AirtimeRequest[];
+  p2pTransfers: P2PTransfer[];
+  fxExchanges: FxExchangeRecord[];
+  usdtRequests: UsdtRequest[];
   transactions: TransactionRecord[];
   promotions: AdminPromotion[];
   settings: SystemSettings;

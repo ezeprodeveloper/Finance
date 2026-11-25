@@ -1,15 +1,10 @@
-import {
+import type {
   InvestmentPlanTier,
   PlatformStoreState,
   SystemSettings,
-} from '../types/finance';
-
-export const PLATFORM_STORAGE_KEY = 'efinance_rwanda_store_v3';
+} from '../types/finance.ts';
 
 export const ADMIN_EMAIL = 'ezeprodeveloper@gmail.com';
-// Exact SHA-256 of configured administrator password
-export const ADMIN_PASSWORD_SHA256 =
-  '6c2fd62a214bcfe45e1a4f8a2abfac29ddb81623d1840c2f7f3807325f8d8e4f';
 
 export const INVESTMENT_PLAN_TIERS: InvestmentPlanTier[] = [
   { id: 'plan-500', name: 'Starter 500 Plan', depositRwf: 500, dailyReturnRwf: 20, durationDays: 60 },
@@ -24,7 +19,6 @@ export const INVESTMENT_PLAN_TIERS: InvestmentPlanTier[] = [
   { id: 'plan-20000', name: 'Premier 20,000 Plan', depositRwf: 20000, dailyReturnRwf: 2200, durationDays: 60 },
 ];
 
-
 export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   activationFeeRwf: 200,
   welcomeBonusRwf: 200,
@@ -35,8 +29,11 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   referralCommissionPercent: 10,
   minVideoRewardRwf: 50,
   momoPayCode: '1880554',
+  sendMoneyTaxPercent: 10,
+  rwfPerUsdRate: 1380,
+  binanceDepositAddress: 'Binance Pay ID: 58392014 · TRC20: TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE',
   platformTagline:
-    'Rwanda Digital Finance — Savings, Credit Requests, Daily Return Plans, Video Campaigns & Verified Tasks.',
+    'Rwanda Digital Finance — Savings, Credit Requests, Quiz Bet, Airtime, FX & USDT, Video Campaigns & Verified Tasks.',
   maintenanceMode: false,
 };
 
@@ -50,6 +47,11 @@ export const INITIAL_PLATFORM_STATE: PlatformStoreState = {
   videoCampaigns: [],
   customTasks: [],
   taskSubmissions: [],
+  betSessions: [],
+  airtimeRequests: [],
+  p2pTransfers: [],
+  fxExchanges: [],
+  usdtRequests: [],
   transactions: [],
   promotions: [
     {
@@ -74,32 +76,3 @@ export const INITIAL_PLATFORM_STATE: PlatformStoreState = {
   settings: DEFAULT_SYSTEM_SETTINGS,
   session: { type: 'guest' },
 };
-
-export function loadPlatformState(): PlatformStoreState {
-  if (typeof window === 'undefined') return INITIAL_PLATFORM_STATE;
-  try {
-    const raw = window.localStorage.getItem(PLATFORM_STORAGE_KEY);
-    if (!raw) return INITIAL_PLATFORM_STATE;
-    const parsed = JSON.parse(raw) as Partial<PlatformStoreState>;
-    return {
-      ...INITIAL_PLATFORM_STATE,
-      ...parsed,
-      settings: {
-        ...DEFAULT_SYSTEM_SETTINGS,
-        ...(parsed.settings ?? {}),
-      },
-      session: parsed.session ?? { type: 'guest' },
-    };
-  } catch {
-    return INITIAL_PLATFORM_STATE;
-  }
-}
-
-export function savePlatformState(state: PlatformStoreState): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(PLATFORM_STORAGE_KEY, JSON.stringify(state));
-  } catch {
-    // Handle storage quota limits gracefully
-  }
-}

@@ -1,3 +1,10 @@
+export type RwandaProvince =
+  | 'Kigali City'
+  | 'Northern Province'
+  | 'Southern Province'
+  | 'Eastern Province'
+  | 'Western Province';
+
 export interface RwandaLocationTree {
   [district: string]: {
     [sector: string]: {
@@ -6,7 +13,205 @@ export interface RwandaLocationTree {
   };
 }
 
-export const RWANDA_LOCATIONS: RwandaLocationTree = {
+export const RWANDA_PROVINCES: RwandaProvince[] = [
+  'Kigali City',
+  'Northern Province',
+  'Southern Province',
+  'Eastern Province',
+  'Western Province',
+];
+
+export const RWANDA_DISTRICTS_BY_PROVINCE: Record<RwandaProvince, string[]> = {
+  'Kigali City': ['Gasabo', 'Kicukiro', 'Nyarugenge'],
+  'Northern Province': ['Burera', 'Gakenke', 'Gicumbi', 'Musanze', 'Rulindo'],
+  'Southern Province': [
+    'Gisagara',
+    'Huye',
+    'Kamonyi',
+    'Muhanga',
+    'Nyamagabe',
+    'Nyanza',
+    'Nyaruguru',
+    'Ruhango',
+  ],
+  'Eastern Province': [
+    'Bugesera',
+    'Gatsibo',
+    'Kayonza',
+    'Kirehe',
+    'Ngoma',
+    'Nyagatare',
+    'Rwamagana',
+  ],
+  'Western Province': [
+    'Karongi',
+    'Ngororero',
+    'Nyabihu',
+    'Nyamasheke',
+    'Rubavu',
+    'Rusizi',
+    'Rutsiro',
+  ],
+};
+
+export const RWANDA_PROVINCE_BY_DISTRICT: Record<string, RwandaProvince> = Object.entries(
+  RWANDA_DISTRICTS_BY_PROVINCE,
+).reduce(
+  (acc, [province, districts]) => {
+    districts.forEach((d) => {
+      acc[d] = province as RwandaProvince;
+    });
+    return acc;
+  },
+  {} as Record<string, RwandaProvince>,
+);
+
+const ALL_SECTORS_BY_DISTRICT: Record<string, string[]> = {
+  // Kigali City (35 sectors)
+  Gasabo: [
+    'Bumbogo', 'Gatsata', 'Gikomero', 'Gisozi', 'Jabana',
+    'Jali', 'Kacyiru', 'Kimihurura', 'Kimironko', 'Kinyinya',
+    'Ndera', 'Nduba', 'Remera', 'Rusororo', 'Rutunga',
+  ],
+  Kicukiro: [
+    'Gahanga', 'Gatenga', 'Gikondo', 'Kagarama', 'Kanombe',
+    'Kicukiro', 'Kigarama', 'Masaka', 'Niboye', 'Nyarugunga',
+  ],
+  Nyarugenge: [
+    'Gitega', 'Kanyinya', 'Kigali', 'Kimisagara', 'Mageragere',
+    'Muhima', 'Nyakabanda', 'Nyamirambo', 'Nyarugenge', 'Rwezamenyo',
+  ],
+  // Northern Province (89 sectors)
+  Burera: [
+    'Bungwe', 'Butaro', 'Cyanika', 'Cyeru', 'Gahunga', 'Gatebe',
+    'Gitovu', 'Kagogo', 'Kinoni', 'Kinyababa', 'Kivuye', 'Nemba',
+    'Rugarama', 'Rugengabari', 'Ruhunde', 'Rusarabuye', 'Rwerere',
+  ],
+  Gakenke: [
+    'Busengo', 'Coko', 'Cyabingo', 'Gakenke', 'Gashenyi', 'Janja',
+    'Kamubuga', 'Karambo', 'Kivuruga', 'Mataba', 'Minazi', 'Mugunga',
+    'Muhondo', 'Muyongwe', 'Muzo', 'Nemba', 'Ruli', 'Rusasa', 'Rushashi',
+  ],
+  Gicumbi: [
+    'Bukure', 'Bwisige', 'Byumba', 'Cyumba', 'Giti', 'Kageyo',
+    'Kaniga', 'Manyagiro', 'Miyove', 'Mukarange', 'Muko', 'Mutete',
+    'Nyamiyaga', 'Nyankenke', 'Rubaya', 'Rukomo', 'Rushaki', 'Rutare',
+    'Ruvune', 'Rwamiko', 'Shangasha',
+  ],
+  Musanze: [
+    'Busogo', 'Cyuve', 'Gacaca', 'Gashaki', 'Gataraga', 'Kimonyi',
+    'Kinigi', 'Muhoza', 'Muko', 'Musanze', 'Nkotsi', 'Nyange',
+    'Remera', 'Rwaza', 'Shingiro',
+  ],
+  Rulindo: [
+    'Base', 'Burega', 'Bushoki', 'Buyoga', 'Cyinzuzi', 'Cyungo',
+    'Kinihira', 'Kisaro', 'Masoro', 'Mbogo', 'Murambi', 'Ngoma',
+    'Ntarabana', 'Rukozo', 'Rusiga', 'Shyorongi', 'Tumba',
+  ],
+  // Southern Province (101 sectors)
+  Gisagara: [
+    'Gikonko', 'Gishubi', 'Kansi', 'Kibilizi', 'Kigembe', 'Mamba',
+    'Muganza', 'Mugombwa', 'Mukindo', 'Musha', 'Ndora', 'Nyanza', 'Save',
+  ],
+  Huye: [
+    'Gishamvu', 'Huye', 'Karama', 'Kigoma', 'Kinazi', 'Maraba',
+    'Mbazi', 'Mukura', 'Ngoma', 'Ruhashya', 'Rusatira', 'Rwaniro',
+    'Simbi', 'Tumba',
+  ],
+  Kamonyi: [
+    'Gacurabwenge', 'Karama', 'Kayenzi', 'Kayumbu', 'Mugina', 'Musambira',
+    'Ngamba', 'Nyamiyaga', 'Nyarubaka', 'Rugalika', 'Rukoma', 'Runda',
+  ],
+  Muhanga: [
+    'Cyeza', 'Kabacuzi', 'Kibangu', 'Kiyumba', 'Muhanga', 'Mushishiro',
+    'Nyabinoni', 'Nyamabuye', 'Nyarusange', 'Rongi', 'Rugendabari', 'Shyogwe',
+  ],
+  Nyamagabe: [
+    'Buruhukiro', 'Cyanika', 'Gasaka', 'Gatare', 'Kaduha', 'Kamegeri',
+    'Kibirizi', 'Kibumbwe', 'Kitabi', 'Mbazi', 'Mugano', 'Musange',
+    'Musebeya', 'Mushubi', 'Nkomane', 'Tare', 'Uwinkingi',
+  ],
+  Nyanza: [
+    'Busasamana', 'Busoro', 'Cyabakamyi', 'Kibilizi', 'Kigoma',
+    'Mukingo', 'Muyira', 'Ntyazo', 'Nyagisozi', 'Rwabicuma',
+  ],
+  Nyaruguru: [
+    'Busanze', 'Cyahinda', 'Kibeho', 'Kivu', 'Mata', 'Muganza',
+    'Munini', 'Ngera', 'Ngoma', 'Nyabimata', 'Nyagisozi', 'Ruheru',
+    'Ruramba', 'Rusenge',
+  ],
+  Ruhango: [
+    'Bweramana', 'Byimana', 'Kabagali', 'Kinazi', 'Kinihira',
+    'Mbuye', 'Mwendo', 'Ntongwe', 'Ruhango',
+  ],
+  // Eastern Province (95 sectors)
+  Bugesera: [
+    'Gashora', 'Juru', 'Kamabuye', 'Mareba', 'Mayange',
+    'Musenyi', 'Mwogo', 'Ngeruka', 'Ntarama', 'Nyamata',
+    'Nyarugenge', 'Rilima', 'Ruhuha', 'Rweru', 'Shyara',
+  ],
+  Gatsibo: [
+    'Gasange', 'Gatsibo', 'Gitoki', 'Kabarore', 'Kageyo',
+    'Kiramuruzi', 'Kiziguro', 'Muhura', 'Murambi', 'Ngarama',
+    'Nyagihanga', 'Remera', 'Rugarama', 'Rwimbogo',
+  ],
+  Kayonza: [
+    'Gahini', 'Kabare', 'Kabarondo', 'Mukarange', 'Murama', 'Murundi',
+    'Mwiri', 'Ndego', 'Nyamirama', 'Rukara', 'Ruramira', 'Rwinkwavu',
+  ],
+  Kirehe: [
+    'Gahara', 'Gatore', 'Kigarama', 'Kigina', 'Kirehe', 'Mahama',
+    'Mpanga', 'Musaza', 'Mushikiri', 'Nasho', 'Nyamugari', 'Nyarubuye',
+  ],
+  Ngoma: [
+    'Gashanda', 'Jarama', 'Karembo', 'Kazo', 'Kibungo', 'Mugesera',
+    'Murama', 'Mutenderi', 'Remera', 'Rukira', 'Rukumberi', 'Rurenge',
+    'Sake', 'Zaza',
+  ],
+  Nyagatare: [
+    'Gatunda', 'Karama', 'Karangazi', 'Katabagemu', 'Kiyombe',
+    'Matimba', 'Mimuli', 'Mukama', 'Musheli', 'Nyagatare',
+    'Rukomo', 'Rwempasha', 'Rwimiyaga', 'Tabagwe',
+  ],
+  Rwamagana: [
+    'Fumbwe', 'Gahengeri', 'Gishali', 'Karenge', 'Kigabiro',
+    'Muhazi', 'Munyaga', 'Munyiginya', 'Musha', 'Muyumbu',
+    'Mwulire', 'Nyakaliro', 'Nzige', 'Rubona',
+  ],
+  // Western Province (96 sectors)
+  Karongi: [
+    'Bwishyura', 'Gashari', 'Gishyita', 'Gitesi', 'Mubuga', 'Murambi',
+    'Murundi', 'Mutuntu', 'Rubengera', 'Rugabano', 'Ruganda', 'Rwankuba', 'Twumba',
+  ],
+  Ngororero: [
+    'Bwira', 'Gatumba', 'Hindiro', 'Kabaya', 'Kageyo', 'Kavumu',
+    'Matyazo', 'Muhanda', 'Muhororo', 'Ndaro', 'Ngororero', 'Nyange', 'Sovu',
+  ],
+  Nyabihu: [
+    'Bigogwe', 'Jenda', 'Jomba', 'Kabatwa', 'Karago', 'Kintobo',
+    'Mukamira', 'Muringa', 'Rambura', 'Rugera', 'Rurembo', 'Shyira',
+  ],
+  Nyamasheke: [
+    'Bushekeri', 'Bushenge', 'Cyato', 'Gihombo', 'Kagano', 'Kanjongo',
+    'Karambi', 'Karengera', 'Kirimbi', 'Macuba', 'Mahembe', 'Nyabitekeri',
+    'Rangiro', 'Ruharambuga', 'Shangi',
+  ],
+  Rubavu: [
+    'Bugeshi', 'Busasamana', 'Cyanzarwe', 'Gisenyi', 'Kanama', 'Kanzenze',
+    'Mudende', 'Nyakiriba', 'Nyamyumba', 'Nyundo', 'Rubavu', 'Rugerero',
+  ],
+  Rusizi: [
+    'Bugarama', 'Butare', 'Bweyeye', 'Gashonga', 'Giheke', 'Gihundwe',
+    'Gikundamvura', 'Gitambi', 'Kamembe', 'Muganza', 'Mururu', 'Nkanka',
+    'Nkombo', 'Nkungu', 'Nyakabuye', 'Nyakarenzo', 'Nzahaha', 'Rwimbogo',
+  ],
+  Rutsiro: [
+    'Boneza', 'Gihango', 'Kigeyo', 'Kivumu', 'Manihira', 'Mukura',
+    'Murunda', 'Musasa', 'Mushonyi', 'Mushubati', 'Nyabirasi', 'Ruhango', 'Rusebeya',
+  ],
+};
+
+const CURATED_CELLS_AND_VILLAGES: RwandaLocationTree = {
   Gasabo: {
     Kimironko: {
       Bibare: ['Abatuje', 'Amariza', 'Imanzi', 'Inganji', 'Nyagatovu'],
@@ -304,5 +509,20 @@ export const RWANDA_LOCATIONS: RwandaLocationTree = {
     },
   },
 };
+
+// Build complete location tree covering all 30 Districts & all 416 Sectors of Rwanda
+export const RWANDA_LOCATIONS: RwandaLocationTree = Object.keys(ALL_SECTORS_BY_DISTRICT).reduce(
+  (tree, district) => {
+    const sectors = ALL_SECTORS_BY_DISTRICT[district] ?? [];
+    const curatedDistrict = CURATED_CELLS_AND_VILLAGES[district] ?? {};
+    const sectorMap: { [sector: string]: { [cell: string]: string[] } } = {};
+    sectors.forEach((sector) => {
+      sectorMap[sector] = curatedDistrict[sector] ?? {};
+    });
+    tree[district] = sectorMap;
+    return tree;
+  },
+  {} as RwandaLocationTree,
+);
 
 export const RWANDA_DISTRICTS = Object.keys(RWANDA_LOCATIONS).sort();

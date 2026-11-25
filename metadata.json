@@ -1,6 +1,6 @@
 {
   "name": "E-Finance Rwanda",
-  "description": "Digital finance platform for Rwanda featuring RWF wallet management, smart savings, loans, mobile money payouts, paid tasks, and GitHub Pages host integration.",
+  "description": "Digital finance platform for Rwanda featuring SQL-backed RWF/USD/USDT wallets, smart savings, loans, Quiz Bet, mobile money & airtime, P2P transfers, and Netlify serverless support.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

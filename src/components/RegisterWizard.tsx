@@ -19,7 +19,11 @@ interface RegisterWizardProps {
   isOpen: boolean;
   existingUsers: RegisteredUser[];
   onClose: () => void;
-  onComplete: (newUser: RegisteredUser, rawPassword: string) => Promise<string | null>;
+  onComplete: (
+    newUser: RegisteredUser,
+    rawPassword: string,
+    referralCodeInput: string,
+  ) => Promise<string | null>;
   onSwitchToLogin: () => void;
 }
 
@@ -53,6 +57,7 @@ export function RegisterWizard({
 
   // Step 3: Place of Birth, Residence, Referral & Password
   const [placeOfBirth, setPlaceOfBirth] = useState('');
+  const [province, setProvince] = useState('');
   const [akarere, setAkarere] = useState('');
   const [umurenge, setUmurenge] = useState('');
   const [akagari, setAkagari] = useState('');
@@ -202,6 +207,7 @@ export function RegisterWizard({
         },
         residence: {
           placeOfBirth: placeOfBirth.trim(),
+          province: province.trim() || undefined,
           akarere: akarere.trim() || undefined,
           umurenge: umurenge.trim() || undefined,
           akagari: akagari.trim() || undefined,
@@ -217,12 +223,15 @@ export function RegisterWizard({
         walletBalanceRwf: 0,
         bonusBalanceRwf: 0,
         savingsBalanceRwf: 0,
+        walletBalanceUsd: 0,
+        usdtBalance: 0,
+        usdtSavingsBalance: 0,
         lastCheckInAt: null,
         checkInStreak: 0,
         kycStatus: 'not_submitted',
         createdAt: new Date().toISOString(),
       };
-      const regError = await onComplete(newUser, password);
+      const regError = await onComplete(newUser, password, cleanRef);
       if (regError) {
         setError(regError);
       }
@@ -578,14 +587,16 @@ export function RegisterWizard({
 
               <div className="border-t border-slate-200 pt-4 space-y-3">
                 <p className="text-xs font-semibold text-slate-800">
-                  Current Residence (Rwanda Administrative Hierarchy — Optional)
+                  Current Residence (All 5 Provinces, 30 Districts &amp; 416 Sectors — Optional)
                 </p>
                 <RwandaLocationSelector
+                  province={province}
                   akarere={akarere}
                   umurenge={umurenge}
                   akagari={akagari}
                   umudugudu={umudugudu}
                   onChange={(loc) => {
+                    setProvince(loc.province);
                     setAkarere(loc.akarere);
                     setUmurenge(loc.umurenge);
                     setAkagari(loc.akagari);

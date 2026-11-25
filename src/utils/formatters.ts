@@ -3,6 +3,16 @@ export function formatRwf(amount: number): string {
   return `${safe.toLocaleString('en-US')} RWF`;
 }
 
+export function formatUsd(amount: number): string {
+  const safe = Number.isFinite(amount) ? amount : 0;
+  return `$${safe.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`;
+}
+
+export function formatUsdt(amount: number): string {
+  const safe = Number.isFinite(amount) ? amount : 0;
+  return `${safe.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} USDT`;
+}
+
 export function formatShortDate(isoDate: string): string {
   const parsed = new Date(isoDate);
   if (Number.isNaN(parsed.getTime())) {

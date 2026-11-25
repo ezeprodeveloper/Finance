@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, Copy, Gift, Sparkles, Users } from 'lucide-react';
+import { Check, Copy, Gift, MessageCircle, Sparkles, Users } from 'lucide-react';
 import { RegisteredUser, SpinHistoryRecord } from '../../types/finance';
 import { formatDateTime, formatRwf } from '../../utils/formatters';
 
@@ -61,6 +61,10 @@ export function LuckySpinWheel({
     typeof window !== 'undefined'
       ? `${window.location.origin}${window.location.pathname}?ref=${encodeURIComponent(user.referralCode)}`
       : `?ref=${user.referralCode}`;
+
+  const whatsappShareHref = `https://wa.me/?text=${encodeURIComponent(
+    `Join E-Finance Rwanda using my referral code ${user.referralCode} to save RWF, play 10s Quiz Bet, earn from short videos & tasks, and unlock your welcome bonus: ${referralLink}`,
+  )}`;
 
   const drawWheel = (angleRad: number) => {
     const canvas = canvasRef.current;
@@ -200,14 +204,25 @@ export function LuckySpinWheel({
         <div className="p-5">
           <p className="text-xs text-slate-500">Your Referral Code</p>
           <p className="font-mono text-lg font-semibold text-blue-800 mt-1">{user.referralCode}</p>
-          <button
-            type="button"
-            onClick={handleCopyReferral}
-            className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-slate-700 hover:text-slate-950"
-          >
-            {copiedRef ? <Check className="w-3.5 h-3.5 text-emerald-700" /> : <Copy className="w-3.5 h-3.5" />}
-            <span>{copiedRef ? 'Copied Referral Link' : 'Copy Referral Link'}</span>
-          </button>
+          <div className="mt-1.5 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={handleCopyReferral}
+              className="inline-flex items-center gap-1 text-xs font-semibold text-slate-700 hover:text-slate-950"
+            >
+              {copiedRef ? <Check className="w-3.5 h-3.5 text-emerald-700" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{copiedRef ? 'Copied Referral Link' : 'Copy Referral Link'}</span>
+            </button>
+            <a
+              href={whatsappShareHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:text-emerald-900"
+            >
+              <MessageCircle className="w-3.5 h-3.5" />
+              <span>Share on WhatsApp</span>
+            </a>
+          </div>
         </div>
       </div>
 
@@ -283,6 +298,15 @@ export function LuckySpinWheel({
                 {copiedRef ? 'Copied' : 'Copy'}
               </button>
             </div>
+            <a
+              href={whatsappShareHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full h-10 px-4 bg-[#25D366] hover:bg-[#1ebe5d] text-slate-950 rounded-lg text-xs font-bold inline-flex items-center justify-center gap-2 transition-colors"
+            >
+              <MessageCircle className="w-4 h-4" />
+              <span>Share Directly on WhatsApp</span>
+            </a>
           </section>
 
           <section className="bg-white/95 border border-slate-200 rounded-xl overflow-hidden">

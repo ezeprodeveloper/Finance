@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ArrowLeftRight,
   ArrowUpRight,
   Banknote,
+  Brain,
   CalendarCheck,
+  Check,
   CheckCircle2,
   ClipboardCheck,
   Clock,
@@ -16,7 +19,9 @@ import {
   PhoneCall,
   PiggyBank,
   Search,
+  Send,
   ShieldCheck,
+  Smartphone,
   Sparkles,
   TrendingUp,
   User as UserIcon,
@@ -24,9 +29,13 @@ import {
   X,
 } from 'lucide-react';
 import {
+  AirtimeRequest,
+  BetSession,
   CustomTask,
+  FxExchangeRecord,
   InvestmentPlanTier,
   LoanRequest,
+  P2PTransfer,
   RegisteredUser,
   RwandaKycData,
   SavingsGoal,
@@ -35,8 +44,10 @@ import {
   SystemSettings,
   TaskSubmission,
   TransactionRecord,
+  UsdtRequest,
   UserInvestment,
   UserPortalSection,
+  WalletAddressRecord,
   WithdrawalRequest,
 } from '../types/finance';
 import {
@@ -44,17 +55,25 @@ import {
   buildUssdTelHref,
   formatDateTime,
   formatRwf,
+  formatUsd,
+  formatUsdt,
 } from '../utils/formatters';
 import { ColorChangingClock } from './ColorChangingClock';
 import { StatusLabel } from './StatusLabel';
 import { InvestmentPlansView } from './user/InvestmentPlansView';
 import { LuckySpinWheel } from './user/LuckySpinWheel';
+import { QuizBetArena } from './user/QuizBetArena';
 import {
   UserKycView,
   UserLoansView,
   UserSavingsView,
   UserWithdrawalsView,
 } from './user/UserFinancePanels';
+import {
+  UserAirtimeView,
+  UserExchangeUsdtView,
+  UserSendMoneyView,
+} from './user/UserServicesPanels';
 import { UserTasksView, UserVideosView } from './user/UserVideoTasksPanel';
 
 interface UserDashboardProps {
@@ -69,6 +88,11 @@ interface UserDashboardProps {
   videoCampaigns: ShortVideoCampaign[];
   customTasks: CustomTask[];
   taskSubmissions: TaskSubmission[];
+  betSessions: BetSession[];
+  airtimeRequests: AirtimeRequest[];
+  p2pTransfers: P2PTransfer[];
+  fxExchanges: FxExchangeRecord[];
+  usdtRequests: UsdtRequest[];
   transactions: TransactionRecord[];
   onSubmitActivationPayment: (phone: string, ref: string) => void;
   onDailyCheckIn: () => void;
@@ -88,6 +112,38 @@ interface UserDashboardProps {
   onRepayLoan: (loanId: string, amountRwf: number) => void;
   onPurchasePlan: (tier: InvestmentPlanTier, paymentRef: string) => void;
   onCompleteSpin: (rewardRwf: number) => void;
+  onStartQuizBet: (stakeRwf: number) => void;
+  onFinishQuizBet: (session: BetSession) => void;
+  onRequestAirtime: (payload: {
+    network: 'MTN Rwanda' | 'Airtel Rwanda';
+    serviceType: 'Airtime' | 'Internet Bundle';
+    phoneNumber: string;
+    amountRwf: number;
+    bundleLabel?: string;
+  }) => void;
+  onLookupWalletAddress: (address: string) => Promise<WalletAddressRecord | null>;
+  onSendP2P: (payload: {
+    receiverId: string;
+    receiverName: string;
+    receiverAddress: string;
+    grossAmountRwf: number;
+    note?: string;
+  }) => Promise<string | null>;
+  onFxExchange: (
+    direction: FxExchangeRecord['direction'],
+    fromAmount: number,
+  ) => Promise<string | null> | string | null;
+  onUsdtSavingsMove: (
+    action: 'deposit' | 'withdraw',
+    amountUsdt: number,
+  ) => Promise<string | null> | string | null;
+  onCreateUsdtRequest: (payload: {
+    actionType: UsdtRequest['actionType'];
+    amountUsdt: number;
+    network: UsdtRequest['network'];
+    destinationOrTxRef: string;
+    note?: string;
+  }) => Promise<string | null> | string | null;
   onRequestWithdrawal: (payload: {
     network: 'MTN Rwanda' | 'Airtel / Tigo Rwanda';
     destinationType: 'Phone Number' | 'MoMo Pay Code';
@@ -125,6 +181,10 @@ const NAV_ITEMS: Array<{
   icon: React.ComponentType<{ className?: string }>;
 }> = [
   { id: 'overview', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'quiz_bet', label: 'Quiz Bet (10s)', icon: Brain },
+  { id: 'send_money', label: 'Send Money', icon: Send },
+  { id: 'airtime', label: 'Airtime & Data', icon: Smartphone },
+  { id: 'exchange_usdt', label: 'FX USD & USDT', icon: ArrowLeftRight },
   { id: 'invest', label: 'Investment Plans', icon: TrendingUp },
   { id: 'spin', label: 'Lucky Spin & Referrals', icon: Sparkles },
   { id: 'kyc', label: 'Rwanda KYC', icon: ShieldCheck },
@@ -147,10 +207,11 @@ export function UserDashboard(props: UserDashboardProps) {
     setSection(next);
   };
 
-  // Activation payment state
+  // Activation payment & address copy state
   const [actPhone, setActPhone] = useState(user.phone);
   const [actRef, setActRef] = useState('');
   const [copiedActCode, setCopiedActCode] = useState(false);
+  const [copiedWalletAddr, setCopiedWalletAddr] = useState(false);
 
   // Transactions filter
   const [txSearch, setTxSearch] = useState('');
@@ -573,7 +634,25 @@ export function UserDashboard(props: UserDashboardProps) {
                   <p className="font-mono text-2xl font-semibold text-[#071B38] mt-1 tabular-nums">
                     {formatRwf(user.walletBalanceRwf)}
                   </p>
-                  <p className="text-xs text-slate-500 font-mono mt-1">{user.accountNumber}</p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className="text-xs text-slate-500 font-mono">{user.accountNumber}</span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(user.accountNumber);
+                          setCopiedWalletAddr(true);
+                          setTimeout(() => setCopiedWalletAddr(false), 1800);
+                        } catch {
+                          // ignore
+                        }
+                      }}
+                      className="text-[11px] font-semibold text-blue-800 hover:underline inline-flex items-center gap-0.5"
+                    >
+                      {copiedWalletAddr ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedWalletAddr ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
                 </div>
                 <div className="p-5">
                   <p className="text-xs text-slate-500">Savings Vault Balance</p>
@@ -633,6 +712,60 @@ export function UserDashboard(props: UserDashboardProps) {
                       </button>
                     )}
                   </div>
+                </div>
+              </div>
+
+              {/* Multi-Currency & Quick Services Strip */}
+              <div className="bg-white/95 border border-slate-200 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
+                <div className="flex flex-wrap items-center gap-6 text-xs">
+                  <div>
+                    <span className="text-slate-500 block">USD Balance</span>
+                    <span className="font-mono text-sm font-bold text-blue-800 tabular-nums">
+                      {formatUsd(user.walletBalanceUsd ?? 0)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">USDT Wallet</span>
+                    <span className="font-mono text-sm font-bold text-emerald-700 tabular-nums">
+                      {formatUsdt(user.usdtBalance ?? 0)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">USDT Savings</span>
+                    <span className="font-mono text-sm font-bold text-amber-700 tabular-nums">
+                      {formatUsdt(user.usdtSavingsBalance ?? 0)}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleSelectSection('quiz_bet')}
+                    className="h-8 px-3 bg-[#071B38] text-white text-xs font-semibold rounded-lg"
+                  >
+                    Play 10s Quiz Bet
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectSection('send_money')}
+                    className="h-8 px-3 border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold rounded-lg"
+                  >
+                    Send Money
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectSection('airtime')}
+                    className="h-8 px-3 border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold rounded-lg"
+                  >
+                    Buy Airtime / Data
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectSection('exchange_usdt')}
+                    className="h-8 px-3 border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold rounded-lg"
+                  >
+                    FX USD &amp; USDT
+                  </button>
                 </div>
               </div>
 
@@ -719,6 +852,45 @@ export function UserDashboard(props: UserDashboardProps) {
             </div>
           )}
 
+          {section === 'quiz_bet' && (
+            <QuizBetArena
+              user={user}
+              betSessions={props.betSessions}
+              onStartBet={props.onStartQuizBet}
+              onFinishBet={props.onFinishQuizBet}
+            />
+          )}
+
+          {section === 'airtime' && (
+            <UserAirtimeView
+              user={user}
+              requests={props.airtimeRequests}
+              onRequestAirtime={props.onRequestAirtime}
+            />
+          )}
+
+          {section === 'send_money' && (
+            <UserSendMoneyView
+              user={user}
+              settings={settings}
+              transfers={props.p2pTransfers}
+              onLookupAddress={props.onLookupWalletAddress}
+              onSendMoney={props.onSendP2P}
+            />
+          )}
+
+          {section === 'exchange_usdt' && (
+            <UserExchangeUsdtView
+              user={user}
+              settings={settings}
+              fxExchanges={props.fxExchanges}
+              usdtRequests={props.usdtRequests}
+              onFxExchange={props.onFxExchange}
+              onUsdtSavingsMove={props.onUsdtSavingsMove}
+              onCreateUsdtRequest={props.onCreateUsdtRequest}
+            />
+          )}
+
           {section === 'invest' && (
             <InvestmentPlansView
               settings={settings}
@@ -756,6 +928,7 @@ export function UserDashboard(props: UserDashboardProps) {
             <UserLoansView
               user={user}
               loans={userLoans}
+              onGoToSavings={() => handleSelectSection('savings')}
               onRequestLoan={props.onRequestLoan}
               onRepayLoan={props.onRepayLoan}
             />
@@ -802,6 +975,15 @@ export function UserDashboard(props: UserDashboardProps) {
                     'Check-In',
                     'Savings',
                     'Loan',
+                    'Quiz Bet',
+                    'Quiz Win',
+                    'Airtime & Data',
+                    'Transfer Sent',
+                    'Transfer Received',
+                    'Currency Exchange',
+                    'USDT Deposit',
+                    'USDT Savings',
+                    'USDT Send / Withdraw',
                     'Investment ROI',
                     'Investment Deposit',
                     'Spin Win',

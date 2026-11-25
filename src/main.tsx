@@ -1,10 +1,10 @@
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
-import { FirebaseErrorBoundary } from './components/FirebaseErrorBoundary.tsx';
+import { AppErrorBoundary } from './components/AppErrorBoundary.tsx';
 import './index.css';
 
 createRoot(document.getElementById('root')!).render(
-  <FirebaseErrorBoundary>
+  <AppErrorBoundary>
     <App />
-  </FirebaseErrorBoundary>,
+  </AppErrorBoundary>,
 );
