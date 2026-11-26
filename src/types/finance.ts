@@ -44,6 +44,14 @@ export interface RwandaKycData {
   reviewNote?: string;
 }
 
+export interface StoredMediaMetadata {
+  backend: 'firebase_storage' | 'firestore_inline';
+  storagePath?: string;
+  contentType: string;
+  sizeBytes: number;
+  uploadedAt: string;
+}
+
 export interface RegisteredUser {
   id: string;
   firstName: string;
@@ -54,9 +62,10 @@ export interface RegisteredUser {
   dateOfBirth: string;
   idNumber: string;
   photoDataUrl: string;
+  photoMetadata?: StoredMediaMetadata;
   education: EducationDetails;
   residence: ResidenceDetails;
-  passwordHash: string;
+  passwordHash?: string;
   accountNumber: string;
   referralCode: string;
   referredByUserId?: string;

@@ -78,6 +78,7 @@
         "dateOfBirth": { "type": "string", "maxLength": 32 },
         "idNumber": { "type": "string", "pattern": "^\\d{16}$", "maxLength": 16 },
         "photoDataUrl": { "type": "string", "maxLength": 450000 },
+        "photoMetadata": { "type": "object" },
         "education": { "type": "object" },
         "residence": { "type": "object" },
         "accountNumber": { "type": "string", "maxLength": 40 },

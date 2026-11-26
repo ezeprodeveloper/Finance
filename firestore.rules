@@ -146,7 +146,7 @@ service cloud.firestore {
         ]) &&
         data.keys().hasOnly([
           'id', 'firstName', 'secondName', 'email', 'phone', 'gender', 'dateOfBirth', 'idNumber',
-          'photoDataUrl', 'education', 'residence', 'passwordHash', 'accountNumber', 'referralCode',
+          'photoDataUrl', 'photoMetadata', 'education', 'residence', 'passwordHash', 'accountNumber', 'referralCode',
           'referredByUserId', 'spinCredits', 'hasCompletedFirstWithdrawal', 'accountStatus',
           'activationPaymentRef', 'activationPaidPhone',
           'walletBalanceRwf', 'bonusBalanceRwf', 'savingsBalanceRwf',
@@ -162,6 +162,7 @@ service cloud.firestore {
         data.dateOfBirth is string && data.dateOfBirth.size() >= 4 && data.dateOfBirth.size() <= 32 &&
         data.idNumber is string && data.idNumber.matches('^\\d{16}$') &&
         data.photoDataUrl is string && data.photoDataUrl.size() >= 20 && data.photoDataUrl.size() <= 450000 &&
+        (!('photoMetadata' in data) || data.photoMetadata == null || data.photoMetadata is map) &&
         data.education is map &&
         data.residence is map &&
         data.accountNumber is string && data.accountNumber.size() >= 6 && data.accountNumber.size() <= 40 &&

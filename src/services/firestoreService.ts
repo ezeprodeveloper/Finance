@@ -1,17 +1,20 @@
 import {
+  confirmPasswordReset,
   createUserWithEmailAndPassword,
-  deleteUser,
   onAuthStateChanged,
   sendEmailVerification,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
-  signInWithPopup,
   signOut,
+  verifyPasswordResetCode,
+  type ActionCodeSettings,
   type User as FirebaseUser,
 } from 'firebase/auth';
 import {
   collection,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   onSnapshot,
   query,
@@ -31,11 +34,12 @@ import {
 import {
   auth,
   db,
-  googleProvider,
+  ensureAuthPersistence,
   handleFirestoreError,
   OperationType,
   testConnection,
 } from '../lib/firebase';
+import { uploadPersistentDataUrl } from './storageService';
 import type {
   AdminPromotion,
   AirtimeRequest,
@@ -76,6 +80,7 @@ export interface PublicBootstrapData {
 
 export interface MemberWorkspaceSnapshot {
   user: RegisteredUser | null;
+  userDocLoaded: boolean;
   referredUsersCount: number;
   settings: SystemSettings;
   savingsGoals: SavingsGoal[];
@@ -161,6 +166,23 @@ function mergeById<T extends { id: string }>(a: T[], b: T[]): T[] {
   return Array.from(map.values());
 }
 
+export interface MemberProfileDraft {
+  firstName: string;
+  secondName: string;
+  email: string;
+  phone: string;
+  gender: RegisteredUser['gender'];
+  dateOfBirth: string;
+  idNumber: string;
+  photoDataUrl: string;
+  education: RegisteredUser['education'];
+  residence: RegisteredUser['residence'];
+  referralCodeInput: string;
+}
+
+let pendingRegistrationUid: string | null = null;
+let pendingProfileDraft: MemberProfileDraft | null = null;
+
 function mapFirebaseAuthError(err: unknown): string {
   const code =
     typeof err === 'object' && err !== null && 'code' in err
@@ -168,9 +190,9 @@ function mapFirebaseAuthError(err: unknown): string {
       : '';
   switch (code) {
     case 'auth/operation-not-allowed':
-      return 'Email/Password sign-in is not yet enabled in Firebase Console. Open Firebase Console (e-finance-2026) → Authentication → Sign-in method → enable Email/Password, or use Google Sign-In.';
+      return 'Email/Password sign-in is not yet enabled in Firebase Console. Open Firebase Console (e-finance-2026) → Authentication → Sign-in method → enable Email/Password.';
     case 'auth/email-already-in-use':
-      return 'An account with this email address already exists.';
+      return 'An account with this email address already exists. Sign in with your password to access or recover your profile.';
     case 'auth/invalid-email':
       return 'Enter a valid email address.';
     case 'auth/weak-password':
@@ -179,15 +201,38 @@ function mapFirebaseAuthError(err: unknown): string {
     case 'auth/wrong-password':
     case 'auth/user-not-found':
       return 'Invalid email/phone or password. Please check your credentials.';
+    case 'auth/expired-action-code':
+      return 'This password reset link has expired. Please request a new password reset email.';
+    case 'auth/invalid-action-code':
+      return 'This password reset link is invalid or has already been used. Please request a new password reset email.';
+    case 'auth/user-disabled':
+      return 'This account has been disabled. Contact E-Finance Rwanda Administration.';
     case 'auth/too-many-requests':
       return 'Too many attempts. Please wait a moment and try again.';
-    case 'auth/popup-closed-by-user':
-      return 'Google sign-in popup was closed before completion.';
+    case 'auth/network-request-failed':
+      return 'Network connection interrupted. Please check your internet and try again.';
     case 'auth/unauthorized-domain':
       return 'This domain is not authorized for Firebase Auth. Add this domain under Firebase Console → Authentication → Settings → Authorized domains.';
     default:
       return err instanceof Error ? err.message : 'Authentication failed. Please try again.';
   }
+}
+
+function getPasswordResetActionCodeSettings(): ActionCodeSettings | undefined {
+  const envUrl =
+    typeof import.meta !== 'undefined' && import.meta.env?.VITE_PUBLIC_APP_URL
+      ? String(import.meta.env.VITE_PUBLIC_APP_URL).trim()
+      : '';
+  const browserOrigin =
+    typeof window !== 'undefined' && window.location?.origin?.startsWith('http')
+      ? window.location.origin
+      : '';
+  const baseUrl = envUrl.startsWith('http') ? envUrl : browserOrigin;
+  if (!baseUrl) return undefined;
+  return {
+    url: `${baseUrl.replace(/\/+$/, '')}/reset-password`,
+    handleCodeInApp: true,
+  };
 }
 
 function isSafeHttpUrl(url: string): boolean {
@@ -314,6 +359,20 @@ export const firestoreService = {
     return onAuthStateChanged(auth, cb);
   },
 
+  isRegistrationPending: (uid: string): boolean => pendingRegistrationUid === uid,
+
+  getPendingProfileDraft: (): MemberProfileDraft | null => pendingProfileDraft,
+
+  getMemberProfileByUid: async (uid: string): Promise<RegisteredUser | null> => {
+    try {
+      const serverSnap = await getDocFromServer(doc(db, 'users', uid));
+      return serverSnap.exists() ? (serverSnap.data() as RegisteredUser) : null;
+    } catch {
+      const cachedSnap = await getDoc(doc(db, 'users', uid));
+      return cachedSnap.exists() ? (cachedSnap.data() as RegisteredUser) : null;
+    }
+  },
+
   isVerifiedAdminUser: async (fbUser: FirebaseUser | null): Promise<boolean> => {
     if (!fbUser || !fbUser.emailVerified) return false;
     if (fbUser.email?.toLowerCase() === ADMIN_EMAIL) {
@@ -418,18 +477,22 @@ export const firestoreService = {
   signInWithIdentifier: async (
     identifier: string,
     password: string,
-  ): Promise<{ role: 'admin' | 'user'; uid: string }> => {
+  ): Promise<{ role: 'admin' | 'user'; uid: string; profileExists: boolean }> => {
     const raw = identifier.trim();
     if (!raw || !password) {
       throw new Error('Enter your email or phone number and password.');
     }
+
+    await ensureAuthPersistence();
 
     let loginEmail = raw.toLowerCase();
     if (!raw.includes('@')) {
       const phoneKey = normalizePhoneKey(raw);
       const phoneSnap = await getDoc(doc(db, 'phoneDirectory', phoneKey));
       if (!phoneSnap.exists()) {
-        throw new Error('No member account matches that phone number.');
+        throw new Error(
+          'No phone directory entry matches that number. If you already registered, please sign in using your email address and password.',
+        );
       }
       const dir = phoneSnap.data() as { email: string };
       loginEmail = dir.email.toLowerCase();
@@ -448,7 +511,7 @@ export const firestoreService = {
         (code === 'auth/user-not-found' || code === 'auth/invalid-credential')
       ) {
         const errorWithSetup = new Error(
-          'If this is your first deployment, create your Admin Firebase Auth account below or sign in with Google (ezeprodeveloper@gmail.com).',
+          'If this is your first deployment, create your Admin Firebase Auth account below (ezeprodeveloper@gmail.com).',
         ) as Error & { needsAdminSetup?: boolean };
         errorWithSetup.needsAdminSetup = true;
         throw errorWithSetup;
@@ -461,30 +524,37 @@ export const firestoreService = {
         await sendEmailVerification(cred.user).catch(() => {});
         await signOut(auth);
         throw new Error(
-          'Admin verification email sent to ezeprodeveloper@gmail.com. Verify your inbox link first, or use "Continue with Google" below for instant verified Admin sign-in.',
+          'Admin verification email sent to ezeprodeveloper@gmail.com. Please verify your inbox link before signing in.',
         );
       }
       await ensureAdminBootstrap(cred.user);
-      return { role: 'admin', uid: cred.user.uid };
+      return { role: 'admin', uid: cred.user.uid, profileExists: true };
     }
 
     const adminSnap = await getDoc(doc(db, 'admins', cred.user.uid)).catch(() => null);
     if (adminSnap?.exists() && cred.user.emailVerified) {
-      return { role: 'admin', uid: cred.user.uid };
+      return { role: 'admin', uid: cred.user.uid, profileExists: true };
     }
 
-    const userSnap = await getDoc(doc(db, 'users', cred.user.uid));
-    if (!userSnap.exists()) {
-      await signOut(auth);
-      throw new Error('Account profile not found. Please register a member account first.');
+    try {
+      const userSnap = await getDocFromServer(doc(db, 'users', cred.user.uid));
+      if (!userSnap.exists()) {
+        // Keep the Firebase Auth session active so AuthContext can safely recover the profile
+        return { role: 'user', uid: cred.user.uid, profileExists: false };
+      }
+      const profile = userSnap.data() as RegisteredUser;
+      if (profile.accountStatus === 'suspended') {
+        await signOut(auth);
+        throw new Error('Your account is currently suspended. Contact E-Finance Rwanda Admin.');
+      }
+      return { role: 'user', uid: cred.user.uid, profileExists: true };
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('suspended')) {
+        throw err;
+      }
+      // Keep authenticated session intact; AuthContext will load/retry the Firestore profile
+      return { role: 'user', uid: cred.user.uid, profileExists: true };
     }
-    const profile = userSnap.data() as RegisteredUser;
-    if (profile.accountStatus === 'suspended') {
-      await signOut(auth);
-      throw new Error('Your account is currently suspended. Contact E-Finance Rwanda Admin.');
-    }
-
-    return { role: 'user', uid: cred.user.uid };
   },
 
   claimAdminWithEmailPassword: async (email: string, password: string): Promise<void> => {
@@ -495,49 +565,224 @@ export const firestoreService = {
     if (password.length < 8) {
       throw new Error('Choose an admin password with at least 8 characters.');
     }
+    await ensureAuthPersistence();
     try {
       const cred = await createUserWithEmailAndPassword(auth, cleanEmail, password);
       await sendEmailVerification(cred.user).catch(() => {});
       await signOut(auth);
       throw new Error(
-        'Admin Firebase account created. A verification link was sent to ezeprodeveloper@gmail.com — click the link (or use Google Sign-In) to enter the Admin console.',
+        'Admin Firebase account created. A verification link was sent to ezeprodeveloper@gmail.com — click the link to verify and enter the Admin console.',
       );
     } catch (err) {
       throw new Error(mapFirebaseAuthError(err));
     }
   },
 
-  signInWithGoogle: async (): Promise<{ role: 'admin' | 'user'; uid: string }> => {
+  requestPasswordReset: async (email: string): Promise<void> => {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      throw new Error('Enter a valid email address.');
+    }
+
+    const actionCodeSettings = getPasswordResetActionCodeSettings();
     try {
-      const cred = await signInWithPopup(auth, googleProvider);
-      const email = cred.user.email?.toLowerCase() ?? '';
-      if (email === ADMIN_EMAIL && cred.user.emailVerified) {
-        await ensureAdminBootstrap(cred.user);
-        return { role: 'admin', uid: cred.user.uid };
+      if (actionCodeSettings) {
+        await sendPasswordResetEmail(auth, cleanEmail, actionCodeSettings);
+      } else {
+        await sendPasswordResetEmail(auth, cleanEmail);
       }
-      const adminSnap = await getDoc(doc(db, 'admins', cred.user.uid)).catch(() => null);
-      if (adminSnap?.exists() && cred.user.emailVerified) {
-        return { role: 'admin', uid: cred.user.uid };
-      }
-      const userSnap = await getDoc(doc(db, 'users', cred.user.uid));
-      if (!userSnap.exists()) {
-        await signOut(auth);
-        throw new Error(
-          `No E-Finance member profile exists for ${email}. Please complete the 3-step Create Account registration first.`,
-        );
-      }
-      const profile = userSnap.data() as RegisteredUser;
-      if (profile.accountStatus === 'suspended') {
-        await signOut(auth);
-        throw new Error('Your account is currently suspended. Contact E-Finance Rwanda Admin.');
-      }
-      return { role: 'user', uid: cred.user.uid };
     } catch (err) {
-      if (err instanceof Error && !('code' in err)) {
-        throw err;
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code: unknown }).code)
+          : '';
+      // Anti-enumeration: never disclose whether an email address is unregistered
+      if (code === 'auth/user-not-found') {
+        return;
+      }
+      // If current preview/custom domain is not yet allowlisted in Authorized Domains,
+      // fall back to Firebase's default authorized reset link so email delivery still works.
+      if (code === 'auth/unauthorized-continue-uri' || code === 'auth/invalid-continue-uri') {
+        try {
+          await sendPasswordResetEmail(auth, cleanEmail);
+          return;
+        } catch (fallbackErr) {
+          const fbCode =
+            typeof fallbackErr === 'object' && fallbackErr !== null && 'code' in fallbackErr
+              ? String((fallbackErr as { code: unknown }).code)
+              : '';
+          if (fbCode === 'auth/user-not-found') return;
+          throw new Error(mapFirebaseAuthError(fallbackErr));
+        }
       }
       throw new Error(mapFirebaseAuthError(err));
     }
+  },
+
+  verifyResetCode: async (oobCode: string): Promise<string> => {
+    const cleanCode = oobCode.trim();
+    if (!cleanCode) {
+      throw new Error('Missing password reset verification code.');
+    }
+    try {
+      return await verifyPasswordResetCode(auth, cleanCode);
+    } catch (err) {
+      throw new Error(mapFirebaseAuthError(err));
+    }
+  },
+
+  confirmResetPassword: async (oobCode: string, newPassword: string): Promise<void> => {
+    const cleanCode = oobCode.trim();
+    if (!cleanCode) {
+      throw new Error('Missing password reset verification code.');
+    }
+    if (newPassword.length < 8) {
+      throw new Error('New password must be at least 8 characters long.');
+    }
+    try {
+      await confirmPasswordReset(auth, cleanCode, newPassword);
+    } catch (err) {
+      throw new Error(mapFirebaseAuthError(err));
+    }
+  },
+
+  persistMemberProfileForUid: async (
+    uid: string,
+    payload: MemberProfileDraft,
+  ): Promise<RegisteredUser> => {
+    const cleanEmail = payload.email.trim().toLowerCase();
+    const cleanPhone = payload.phone.trim();
+    const phoneKey = normalizePhoneKey(cleanPhone);
+    const cleanId = payload.idNumber.replace(/\s/g, '');
+
+    if (cleanEmail === ADMIN_EMAIL) {
+      throw new Error('This email address is reserved for E-Finance Administration.');
+    }
+    if (!isValidRwandaPhone(cleanPhone)) {
+      throw new Error('Enter a valid Rwanda phone number.');
+    }
+    if (!isValidRwandaId(cleanId)) {
+      throw new Error('Enter a valid 16-digit Rwanda National ID.');
+    }
+    if (!payload.photoDataUrl || payload.photoDataUrl.length < 20) {
+      throw new Error('Upload a clear profile identification photo.');
+    }
+
+    // Do not overwrite an already-persisted user document
+    const existingUserSnap = await getDocFromServer(doc(db, 'users', uid)).catch(() => null);
+    if (existingUserSnap?.exists()) {
+      return existingUserSnap.data() as RegisteredUser;
+    }
+
+    // Upload photo to Firebase Storage if available, otherwise keep compressed Firestore payload within rule bounds
+    const uploadedPhoto = await uploadPersistentDataUrl({
+      ownerUid: uid,
+      folder: 'users',
+      filePrefix: 'profile-id',
+      dataUrlOrHttpUrl: payload.photoDataUrl,
+    });
+    if (uploadedPhoto.url.length > 450000) {
+      throw new Error('Compressed identification photo exceeds 450 KB. Please choose a smaller image.');
+    }
+
+    let referredByUserId: string | undefined;
+    const cleanRef = payload.referralCodeInput.trim().toUpperCase();
+    if (cleanRef && /^[a-zA-Z0-9_-]{3,32}$/.test(cleanRef)) {
+      const refSnap = await getDoc(doc(db, 'referralDirectory', cleanRef));
+      if (refSnap.exists()) {
+        referredByUserId = String((refSnap.data() as { userId: string }).userId);
+      }
+    }
+
+    const accountNumber = generateAccountNumber();
+    let referralCode = generateReferralCode(payload.firstName);
+    const existingRefSnap = await getDoc(doc(db, 'referralDirectory', referralCode));
+    if (existingRefSnap.exists()) {
+      referralCode = `${referralCode}${Math.floor(10 + Math.random() * 89)}`;
+    }
+
+    const nowIso = new Date().toISOString();
+    const rawUser: RegisteredUser = {
+      id: uid,
+      firstName: payload.firstName.trim(),
+      secondName: payload.secondName.trim(),
+      email: cleanEmail,
+      phone: cleanPhone,
+      gender: payload.gender,
+      dateOfBirth: payload.dateOfBirth,
+      idNumber: cleanId,
+      photoDataUrl: uploadedPhoto.url,
+      photoMetadata: uploadedPhoto.metadata,
+      education: {
+        type: payload.education.type,
+        institutionName: payload.education.institutionName.trim(),
+        levelOrClass: payload.education.levelOrClass.trim(),
+        facultyOrCombination: payload.education.facultyOrCombination.trim(),
+      },
+      residence: omitUndefined({
+        placeOfBirth: payload.residence.placeOfBirth.trim(),
+        province: payload.residence.province?.trim() || undefined,
+        akarere: payload.residence.akarere?.trim() || undefined,
+        umurenge: payload.residence.umurenge?.trim() || undefined,
+        akagari: payload.residence.akagari?.trim() || undefined,
+        umudugudu: payload.residence.umudugudu?.trim() || undefined,
+      }),
+      accountNumber,
+      referralCode,
+      referredByUserId,
+      spinCredits: 0,
+      hasCompletedFirstWithdrawal: false,
+      accountStatus: 'pending_approval',
+      walletBalanceRwf: 0,
+      bonusBalanceRwf: 0,
+      savingsBalanceRwf: 0,
+      walletBalanceUsd: 0,
+      usdtBalance: 0,
+      usdtSavingsBalance: 0,
+      lastCheckInAt: null,
+      checkInStreak: 0,
+      kycStatus: 'not_submitted',
+      createdAt: nowIso,
+    };
+    const userDoc: RegisteredUser = omitUndefined(rawUser);
+
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'users', uid), userDoc);
+    batch.set(doc(db, 'phoneDirectory', phoneKey), {
+      email: cleanEmail,
+      userId: uid,
+    });
+    batch.set(doc(db, 'referralDirectory', referralCode), {
+      referralCode,
+      userId: uid,
+    });
+    batch.set(doc(db, 'walletDirectory', accountNumber), {
+      address: accountNumber,
+      userId: uid,
+      fullName: `${userDoc.firstName} ${userDoc.secondName}`,
+      createdAt: nowIso,
+    });
+
+    const notifId = generateSafeId('ntf-reg');
+    batch.set(doc(db, 'notifications', notifId), {
+      id: notifId,
+      recipientId: 'admin',
+      title: 'New Member Registration',
+      message: `${userDoc.firstName} ${userDoc.secondName} (${userDoc.phone}) registered and awaits approval.`,
+      category: 'Registration',
+      read: false,
+      createdAt: nowIso,
+    });
+
+    await batch.commit();
+
+    // Explicitly verify the Firestore document exists on the server before reporting success
+    const verifiedSnap = await getDocFromServer(doc(db, 'users', uid));
+    if (!verifiedSnap.exists()) {
+      throw new Error('Account profile write could not be verified in Firestore. Please retry profile sync.');
+    }
+    pendingProfileDraft = null;
+    return verifiedSnap.data() as RegisteredUser;
   },
 
   registerMember: async (payload: {
@@ -575,6 +820,8 @@ export const firestoreService = {
       throw new Error('Password must be at least 8 characters long.');
     }
 
+    await ensureAuthPersistence();
+
     const existingPhoneSnap = await getDoc(doc(db, 'phoneDirectory', phoneKey));
     if (existingPhoneSnap.exists()) {
       throw new Error('An account with this phone number already exists.');
@@ -588,106 +835,54 @@ export const firestoreService = {
     }
 
     const uid = cred.user.uid;
+    const draft: MemberProfileDraft = {
+      firstName: payload.firstName,
+      secondName: payload.secondName,
+      email: cleanEmail,
+      phone: cleanPhone,
+      gender: payload.gender,
+      dateOfBirth: payload.dateOfBirth,
+      idNumber: cleanId,
+      photoDataUrl: payload.photoDataUrl,
+      education: payload.education,
+      residence: payload.residence,
+      referralCodeInput: payload.referralCodeInput,
+    };
+
+    pendingRegistrationUid = uid;
+    pendingProfileDraft = draft;
+
     try {
-      let referredByUserId: string | undefined;
-      const cleanRef = payload.referralCodeInput.trim().toUpperCase();
-      if (cleanRef && /^[a-zA-Z0-9_-]{3,32}$/.test(cleanRef)) {
-        const refSnap = await getDoc(doc(db, 'referralDirectory', cleanRef));
-        if (refSnap.exists()) {
-          referredByUserId = String((refSnap.data() as { userId: string }).userId);
-        }
-      }
-
-      const accountNumber = generateAccountNumber();
-      let referralCode = generateReferralCode(payload.firstName);
-      const existingRefSnap = await getDoc(doc(db, 'referralDirectory', referralCode));
-      if (existingRefSnap.exists()) {
-        referralCode = `${referralCode}${Math.floor(10 + Math.random() * 89)}`;
-      }
-
-      const nowIso = new Date().toISOString();
-      const rawUser: RegisteredUser = {
-        id: uid,
-        firstName: payload.firstName.trim(),
-        secondName: payload.secondName.trim(),
-        email: cleanEmail,
-        phone: cleanPhone,
-        gender: payload.gender,
-        dateOfBirth: payload.dateOfBirth,
-        idNumber: cleanId,
-        photoDataUrl: payload.photoDataUrl,
-        education: {
-          type: payload.education.type,
-          institutionName: payload.education.institutionName.trim(),
-          levelOrClass: payload.education.levelOrClass.trim(),
-          facultyOrCombination: payload.education.facultyOrCombination.trim(),
-        },
-        residence: omitUndefined({
-          placeOfBirth: payload.residence.placeOfBirth.trim(),
-          province: payload.residence.province?.trim() || undefined,
-          akarere: payload.residence.akarere?.trim() || undefined,
-          umurenge: payload.residence.umurenge?.trim() || undefined,
-          akagari: payload.residence.akagari?.trim() || undefined,
-          umudugudu: payload.residence.umudugudu?.trim() || undefined,
-        }),
-        passwordHash: 'firebase-auth',
-        accountNumber,
-        referralCode,
-        referredByUserId,
-        spinCredits: 0,
-        hasCompletedFirstWithdrawal: false,
-        accountStatus: 'pending_approval',
-        walletBalanceRwf: 0,
-        bonusBalanceRwf: 0,
-        savingsBalanceRwf: 0,
-        walletBalanceUsd: 0,
-        usdtBalance: 0,
-        usdtSavingsBalance: 0,
-        lastCheckInAt: null,
-        checkInStreak: 0,
-        kycStatus: 'not_submitted',
-        createdAt: nowIso,
-      };
-      const userDoc: RegisteredUser = omitUndefined(rawUser);
-
-      const batch = writeBatch(db);
-      batch.set(doc(db, 'users', uid), userDoc);
-      batch.set(doc(db, 'phoneDirectory', phoneKey), {
-        email: cleanEmail,
-        userId: uid,
-      });
-      batch.set(doc(db, 'referralDirectory', referralCode), {
-        referralCode,
-        userId: uid,
-      });
-      batch.set(doc(db, 'walletDirectory', accountNumber), {
-        address: accountNumber,
-        userId: uid,
-        fullName: `${userDoc.firstName} ${userDoc.secondName}`,
-        createdAt: nowIso,
-      });
-
-      const notifId = generateSafeId('ntf-reg');
-      batch.set(doc(db, 'notifications', notifId), {
-        id: notifId,
-        recipientId: 'admin',
-        title: 'New Member Registration',
-        message: `${userDoc.firstName} ${userDoc.secondName} (${userDoc.phone}) registered and awaits approval.`,
-        category: 'Registration',
-        read: false,
-        createdAt: nowIso,
-      });
-
-      await batch.commit();
+      const savedUser = await firestoreService.persistMemberProfileForUid(uid, draft);
       await sendEmailVerification(cred.user).catch(() => {});
-      return userDoc;
+      return savedUser;
     } catch (err) {
-      await deleteUser(cred.user).catch(() => {});
-      handleFirestoreError(err, OperationType.WRITE, `users/${uid}`);
+      // IMPORTANT: Preserve the authenticated Firebase Auth account so it never disappears.
+      // AuthContext / ProfileRecoveryView will allow completing or retrying the profile write.
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Your Firebase login account was created, but saving your Firestore profile failed (${reason}). Use "Complete / Sync Profile" to finish saving without losing your account.`,
+      );
+    } finally {
+      pendingRegistrationUid = null;
+    }
+  },
+
+  recoverMemberProfile: async (
+    uid: string,
+    draft: MemberProfileDraft,
+  ): Promise<RegisteredUser> => {
+    pendingRegistrationUid = uid;
+    try {
+      return await firestoreService.persistMemberProfileForUid(uid, draft);
+    } finally {
+      pendingRegistrationUid = null;
     }
   },
 
   signOutCurrent: async (): Promise<void> => {
+    pendingRegistrationUid = null;
+    pendingProfileDraft = null;
     await signOut(auth).catch(() => {});
   },
 
@@ -701,6 +896,7 @@ export const firestoreService = {
   ): Unsubscribe => {
     const state: MemberWorkspaceSnapshot = {
       user: null,
+      userDocLoaded: false,
       referredUsersCount: 0,
       settings: DEFAULT_SYSTEM_SETTINGS,
       savingsGoals: [],
@@ -890,6 +1086,7 @@ export const firestoreService = {
         doc(db, 'users', uid),
         (snap) => {
           state.user = snap.exists() ? (snap.data() as RegisteredUser) : null;
+          state.userDocLoaded = true;
           emit();
         },
         fail(`users/${uid}`),
@@ -1432,9 +1629,26 @@ export const firestoreService = {
       throw new Error('Provide a valid 16-digit National ID and Next-of-Kin Rwanda phone.');
     }
     const nowIso = new Date().toISOString();
+    const uploadedDoc = await uploadPersistentDataUrl({
+      ownerUid: uid,
+      folder: 'users',
+      filePrefix: 'kyc-id',
+      dataUrlOrHttpUrl: data.idDocumentPhotoDataUrl,
+    });
+    const uploadedSelfie = data.selfiePhotoDataUrl
+      ? await uploadPersistentDataUrl({
+          ownerUid: uid,
+          folder: 'users',
+          filePrefix: 'kyc-selfie',
+          dataUrlOrHttpUrl: data.selfiePhotoDataUrl,
+        })
+      : null;
+
     const kycPayload: RwandaKycData = omitUndefined({
       ...data,
       nationalId: data.nationalId.replace(/\s/g, ''),
+      idDocumentPhotoDataUrl: uploadedDoc.url,
+      selfiePhotoDataUrl: uploadedSelfie?.url,
       submittedAt: data.submittedAt || nowIso,
     });
 
@@ -1922,17 +2136,25 @@ export const firestoreService = {
 
     const title = payload.title.trim();
     const description = payload.description.trim();
-    const videoUrl = payload.videoUrl.trim();
+    const rawVideoUrl = payload.videoUrl.trim();
     const rewardPerViewRwf = Math.round(Number(payload.rewardPerViewRwf));
     const targetViewers = Math.round(Number(payload.targetViewers));
     const paymentRef = payload.paymentRef.trim();
 
-    if (!title || !isSafeMediaOrHttpUrl(videoUrl) || targetViewers < 1 || paymentRef.length < 3) {
+    if (!title || !isSafeMediaOrHttpUrl(rawVideoUrl) || targetViewers < 1 || paymentRef.length < 3) {
       throw new Error('Valid video details, safe video URL, and payment reference required.');
     }
     if (rewardPerViewRwf < settings.minVideoRewardRwf) {
       throw new Error(`Minimum reward per view is ${settings.minVideoRewardRwf} RWF.`);
     }
+
+    const uploadedVideo = await uploadPersistentDataUrl({
+      ownerUid: uid,
+      folder: 'campaigns',
+      filePrefix: 'video',
+      dataUrlOrHttpUrl: rawVideoUrl,
+    });
+    const videoUrl = uploadedVideo.url;
 
     const nowIso = new Date().toISOString();
     const totalBudgetRwf = rewardPerViewRwf * targetViewers;

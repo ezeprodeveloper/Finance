@@ -2,16 +2,17 @@ import { useCallback, useEffect, useState } from 'react';
 import { AdminDashboard } from './components/AdminDashboard';
 import { LandingView } from './components/LandingView';
 import { LoginModal } from './components/LoginModal';
+import { ProfileRecoveryView } from './components/ProfileRecoveryView';
 import { RegisterWizard } from './components/RegisterWizard';
+import { ResetPasswordView } from './components/ResetPasswordView';
 import { SplashScreen } from './components/SplashScreen';
 import { UserDashboard } from './components/UserDashboard';
-import { INITIAL_PLATFORM_STATE } from './data/platformStore';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { firestoreService } from './services/firestoreService';
 import type {
   BetSession,
   FxExchangeRecord,
   InvestmentPlanTier,
-  PlatformStoreState,
   RegisteredUser,
   RwandaKycData,
   SavingsGoal,
@@ -20,212 +21,76 @@ import type {
   WalletAddressRecord,
 } from './types/finance';
 
-export default function App() {
-  const [authUid, setAuthUid] = useState<string | null>(null);
-  const [authReady, setAuthReady] = useState(false);
-  const [store, setStore] = useState<PlatformStoreState>(INITIAL_PLATFORM_STATE);
-  const [referredUsersCount, setReferredUsersCount] = useState(0);
-  const [publicStats, setPublicStats] = useState({ totalActiveVideos: 0, totalActiveTasks: 0 });
+function AppContent() {
+  const {
+    firebaseUser,
+    authUid,
+    authStatus,
+    profileStatus,
+    profileError,
+    role,
+    store,
+    currentUser,
+    referredUsersCount,
+    publicStats,
+    actionError,
+    setActionError,
+    signInWithIdentifier,
+    claimAdminWithEmailPassword,
+    requestPasswordReset,
+    registerMember,
+    recoverProfile,
+    retryProfileLoad,
+    signOutUser,
+  } = useAuth();
+
   const [loginOpen, setLoginOpen] = useState(false);
+  const [loginInitialView, setLoginInitialView] = useState<'login' | 'forgot'>('login');
   const [registerOpen, setRegisterOpen] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
   const [showSplash, setShowSplash] = useState(true);
+  const [resetOobCode, setResetOobCode] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const params = new URLSearchParams(window.location.search);
+    const mode = params.get('mode');
+    const code = params.get('oobCode');
+    if (mode === 'resetPassword' && code) return code;
+    if (window.location.pathname === '/reset-password' && code) return code;
+    return null;
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (window.location.pathname === '/forgot-password') {
+      setLoginInitialView('forgot');
+      setLoginOpen(true);
+    } else if (window.location.pathname === '/reset-password') {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('oobCode');
+      setResetOobCode(code ?? '');
+    }
+  }, []);
+
+  const clearResetUrl = useCallback(() => {
+    setResetOobCode(null);
+    if (typeof window !== 'undefined' && window.history?.replaceState) {
+      window.history.replaceState({}, '', '/');
+    }
+  }, []);
 
   const handleSignOut = useCallback(() => {
-    void firestoreService.signOutCurrent();
-    setAuthUid(null);
-    setReferredUsersCount(0);
-    setActionError(null);
-    setStore((prev) => ({
-      ...INITIAL_PLATFORM_STATE,
-      settings: prev.settings,
-      promotions: prev.promotions,
-      session: { type: 'guest' },
-    }));
-  }, []);
+    void signOutUser();
+  }, [signOutUser]);
 
-  // Verify Firestore network connectivity on startup & track Firebase Auth state
-  useEffect(() => {
-    void firestoreService.testConnection();
-    void firestoreService.fetchPublicBootstrap().then((data) => {
-      setPublicStats({
-        totalActiveVideos: data.totalActiveVideos,
-        totalActiveTasks: data.totalActiveTasks,
-      });
-      setStore((prev) => ({
-        ...prev,
-        settings: data.settings,
-        promotions: data.promotions,
-      }));
-    });
-
-    const unsubAuth = firestoreService.onAuthChanged(async (fbUser) => {
-      if (!fbUser) {
-        setAuthUid(null);
-        setStore((prev) => ({
-          ...INITIAL_PLATFORM_STATE,
-          settings: prev.settings,
-          promotions: prev.promotions,
-          session: { type: 'guest' },
-        }));
-        setAuthReady(true);
-        return;
-      }
-
-      const isAdmin = await firestoreService.isVerifiedAdminUser(fbUser);
-      setAuthUid(fbUser.uid);
-      if (isAdmin) {
-        setStore((prev) => ({
-          ...prev,
-          session: { type: 'admin' },
-        }));
-      } else {
-        setStore((prev) => ({
-          ...prev,
-          session: { type: 'user', userId: fbUser.uid },
-        }));
-      }
-      setAuthReady(true);
-    });
-
-    return () => unsubAuth();
-  }, []);
-
-  // Real-time Firestore listener matching active session role
-  useEffect(() => {
-    if (!authReady) return;
-
-    if (store.session.type === 'guest') {
-      return firestoreService.subscribePublicBootstrap((data) => {
-        setPublicStats({
-          totalActiveVideos: data.totalActiveVideos,
-          totalActiveTasks: data.totalActiveTasks,
-        });
-        setStore((prev) => ({
-          ...prev,
-          settings: data.settings,
-          promotions: data.promotions,
-        }));
-      });
-    }
-
-    if (store.session.type === 'user' && authUid) {
-      return firestoreService.subscribeMemberWorkspace(
-        authUid,
-        (snapshot) => {
-          setReferredUsersCount(snapshot.referredUsersCount);
-          setStore((prev) => ({
-            ...prev,
-            users: snapshot.user ? [snapshot.user] : [],
-            settings: snapshot.settings,
-            savingsGoals: snapshot.savingsGoals,
-            loans: snapshot.loans,
-            investments: snapshot.investments,
-            spinHistory: snapshot.spinHistory,
-            withdrawals: snapshot.withdrawals,
-            videoCampaigns: snapshot.videoCampaigns,
-            customTasks: snapshot.customTasks,
-            taskSubmissions: snapshot.taskSubmissions,
-            betSessions: snapshot.betSessions,
-            airtimeRequests: snapshot.airtimeRequests,
-            p2pTransfers: snapshot.p2pTransfers,
-            fxExchanges: snapshot.fxExchanges,
-            usdtRequests: snapshot.usdtRequests,
-            transactions: snapshot.transactions,
-            notifications: snapshot.notifications,
-            session: { type: 'user', userId: authUid },
-          }));
-        },
-        (err) => setActionError(err.message),
-      );
-    }
-
-    if (store.session.type === 'admin' && authUid) {
-      return firestoreService.subscribeAdminWorkspace(
-        (snapshot) => {
-          setStore((prev) => ({
-            ...prev,
-            settings: snapshot.settings,
-            users: snapshot.users,
-            savingsGoals: snapshot.savingsGoals,
-            loans: snapshot.loans,
-            investments: snapshot.investments,
-            spinHistory: snapshot.spinHistory,
-            withdrawals: snapshot.withdrawals,
-            videoCampaigns: snapshot.videoCampaigns,
-            customTasks: snapshot.customTasks,
-            taskSubmissions: snapshot.taskSubmissions,
-            betSessions: snapshot.betSessions,
-            airtimeRequests: snapshot.airtimeRequests,
-            p2pTransfers: snapshot.p2pTransfers,
-            fxExchanges: snapshot.fxExchanges,
-            usdtRequests: snapshot.usdtRequests,
-            transactions: snapshot.transactions,
-            promotions: snapshot.promotions,
-            notifications: snapshot.notifications,
-            session: { type: 'admin' },
-          }));
-        },
-        (err) => setActionError(err.message),
-      );
-    }
-  }, [authReady, store.session.type, authUid]);
-
-  const currentUser =
-    store.session.type === 'user'
-      ? store.users.find((u) => u.id === (store.session as { type: 'user'; userId: string }).userId) ?? null
-      : null;
-
-  /* ------------------------------------------------------------------------ */
-  /* Firebase Authentication & 3-Step Registration                            */
-  /* ------------------------------------------------------------------------ */
   const handleAuthenticate = async (
     identifier: string,
     password: string,
   ): Promise<{ error: string | null; needsAdminSetup?: boolean }> => {
-    try {
-      const res = await firestoreService.signInWithIdentifier(identifier, password);
-      setAuthUid(res.uid);
-      setStore((prev) => ({
-        ...prev,
-        session: res.role === 'admin' ? { type: 'admin' } : { type: 'user', userId: res.uid },
-      }));
+    const res = await signInWithIdentifier(identifier, password);
+    if (!res.error) {
       setLoginOpen(false);
-      return { error: null };
-    } catch (err) {
-      const e = err as Error & { needsAdminSetup?: boolean };
-      return {
-        error: e.message || 'Sign-in failed. Please verify your credentials.',
-        needsAdminSetup: Boolean(e.needsAdminSetup),
-      };
+      setLoginInitialView('login');
     }
-  };
-
-  const handleClaimAdminPassword = async (
-    email: string,
-    password: string,
-  ): Promise<string | null> => {
-    try {
-      await firestoreService.claimAdminWithEmailPassword(email, password);
-      return null;
-    } catch (err) {
-      return err instanceof Error ? err.message : 'Unable to create Admin account.';
-    }
-  };
-
-  const handleGoogleSignIn = async (): Promise<string | null> => {
-    try {
-      const res = await firestoreService.signInWithGoogle();
-      setAuthUid(res.uid);
-      setStore((prev) => ({
-        ...prev,
-        session: res.role === 'admin' ? { type: 'admin' } : { type: 'user', userId: res.uid },
-      }));
-      setLoginOpen(false);
-      return null;
-    } catch (err) {
-      return err instanceof Error ? err.message : 'Google sign-in failed.';
-    }
+    return res;
   };
 
   const handleRegisterComplete = async (
@@ -233,42 +98,24 @@ export default function App() {
     rawPassword: string,
     referralCodeInput: string,
   ): Promise<string | null> => {
-    try {
-      const created = await firestoreService.registerMember({
-        firstName: newUser.firstName,
-        secondName: newUser.secondName,
-        email: newUser.email,
-        phone: newUser.phone,
-        gender: newUser.gender,
-        dateOfBirth: newUser.dateOfBirth,
-        idNumber: newUser.idNumber,
-        photoDataUrl: newUser.photoDataUrl,
-        education: newUser.education,
-        residence: newUser.residence,
-        rawPassword,
-        referralCodeInput,
-      });
-      setAuthUid(created.id);
-      setStore((prev) => ({
-        ...prev,
-        users: [created],
-        session: { type: 'user', userId: created.id },
-      }));
+    const err = await registerMember(newUser, rawPassword, referralCodeInput);
+    if (!err) {
       setRegisterOpen(false);
-      return null;
-    } catch (err) {
-      return err instanceof Error ? err.message : 'Registration failed. Please try again.';
     }
+    return err;
   };
 
-  const runAction = useCallback(async (fn: () => Promise<void>) => {
-    setActionError(null);
-    try {
-      await fn();
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Operation failed.');
-    }
-  }, []);
+  const runAction = useCallback(
+    async (fn: () => Promise<void>) => {
+      setActionError(null);
+      try {
+        await fn();
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : 'Operation failed.');
+      }
+    },
+    [setActionError],
+  );
 
   /* ------------------------------------------------------------------------ */
   /* Member Financial & Interactive Handlers (Cloud Firestore)                */
@@ -598,10 +445,53 @@ export default function App() {
   };
 
   /* ------------------------------------------------------------------------ */
-  /* Render Router                                                            */
+  /* Render Router (Waits for Auth + Firestore Profile Before Routing)        */
   /* ------------------------------------------------------------------------ */
   const renderMainContent = () => {
-    if (store.session.type === 'admin') {
+    if (resetOobCode !== null) {
+      return (
+        <ResetPasswordView
+          oobCode={resetOobCode}
+          onReturnToLogin={() => {
+            clearResetUrl();
+            setLoginInitialView('login');
+            setLoginOpen(true);
+          }}
+          onRequestNewReset={() => {
+            clearResetUrl();
+            setLoginInitialView('forgot');
+            setLoginOpen(true);
+          }}
+        />
+      );
+    }
+
+    if (
+      authStatus === 'initializing' ||
+      (authStatus === 'authenticated' && role === 'user' && profileStatus === 'loading')
+    ) {
+      return (
+        <div
+          className="min-h-screen bg-shifting-aurora text-white flex items-center justify-center p-6"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl px-8 py-7 max-w-sm w-full text-center space-y-3 shadow-2xl">
+            <div className="w-8 h-8 border-2 border-white/30 border-t-emerald-300 rounded-full animate-spin mx-auto" />
+            <h1 className="font-display text-lg font-bold tracking-tight">
+              {authStatus === 'initializing'
+                ? 'Restoring E-Finance Session…'
+                : 'Loading Member Workspace…'}
+            </h1>
+            <p className="text-xs text-slate-200 leading-relaxed">
+              Verifying your Firebase session and loading your Firestore account records.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    if (role === 'admin' && authStatus === 'authenticated') {
       return (
         <AdminDashboard
           users={store.users}
@@ -665,10 +555,14 @@ export default function App() {
             </button>
             <LoginModal
               isOpen={loginOpen}
-              onClose={() => setLoginOpen(false)}
+              initialView={loginInitialView}
+              onClose={() => {
+                setLoginOpen(false);
+                setLoginInitialView('login');
+              }}
               onAuthenticate={handleAuthenticate}
-              onClaimAdminPassword={handleClaimAdminPassword}
-              onGoogleSignIn={handleGoogleSignIn}
+              onClaimAdminPassword={claimAdminWithEmailPassword}
+              onRequestPasswordReset={requestPasswordReset}
               onSwitchToRegister={() => setLoginOpen(false)}
             />
           </div>
@@ -676,7 +570,26 @@ export default function App() {
       );
     }
 
-    if (store.session.type === 'user' && currentUser) {
+    if (
+      authStatus === 'authenticated' &&
+      role === 'user' &&
+      authUid &&
+      (profileStatus === 'missing' || profileStatus === 'error')
+    ) {
+      return (
+        <ProfileRecoveryView
+          uid={authUid}
+          email={firebaseUser?.email ?? ''}
+          mode={profileStatus}
+          errorMessage={profileError}
+          onRecover={recoverProfile}
+          onRetry={retryProfileLoad}
+          onSignOut={signOutUser}
+        />
+      );
+    }
+
+    if (authStatus === 'authenticated' && role === 'user' && currentUser) {
       return (
         <UserDashboard
           user={currentUser}
@@ -750,12 +663,17 @@ export default function App() {
 
         <LoginModal
           isOpen={loginOpen}
-          onClose={() => setLoginOpen(false)}
+          initialView={loginInitialView}
+          onClose={() => {
+            setLoginOpen(false);
+            setLoginInitialView('login');
+          }}
           onAuthenticate={handleAuthenticate}
-          onClaimAdminPassword={handleClaimAdminPassword}
-          onGoogleSignIn={handleGoogleSignIn}
+          onClaimAdminPassword={claimAdminWithEmailPassword}
+          onRequestPasswordReset={requestPasswordReset}
           onSwitchToRegister={() => {
             setLoginOpen(false);
+            setLoginInitialView('login');
             setRegisterOpen(true);
           }}
         />
@@ -783,5 +701,13 @@ export default function App() {
       )}
       {renderMainContent()}
     </>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }

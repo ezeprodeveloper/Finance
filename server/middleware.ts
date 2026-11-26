@@ -1,13 +1,17 @@
 import type { NextFunction, Request, Response } from 'express';
 import { ADMIN_EMAIL } from '../src/data/platformStore.ts';
-import { dbExecute, dbQueryOne } from './db.ts';
-import { generateSessionToken } from './security.ts';
+import {
+  getAdminFirestore,
+  hasServiceAccountCredentials,
+  verifyFirebaseBearerToken,
+} from './firebaseAdmin.ts';
 
 export interface AuthContext {
   token: string;
   role: 'user' | 'admin';
-  userId: string | null;
+  userId: string;
   email: string;
+  emailVerified: boolean;
 }
 
 export interface AuthRequest extends Request {
@@ -22,47 +26,34 @@ export function getEnvAdminPasscode(): string {
   return (process.env.ADMIN_PASSCODE || '').trim();
 }
 
-export async function createSession(
-  role: 'user' | 'admin',
-  userId: string | null,
-  email: string,
-): Promise<string> {
-  const token = generateSessionToken();
-  const now = new Date();
-  const expires = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-  await dbExecute(
-    `INSERT INTO sessions (token, role, user_id, email, expires_at, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [token, role, userId, email, expires.toISOString(), now.toISOString()],
-  );
-  return token;
-}
-
-async function resolveSessionFromRequest(req: Request): Promise<AuthContext | null> {
+async function resolveFirebaseAuth(req: Request): Promise<AuthContext | null> {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) return null;
   const token = header.slice('Bearer '.length).trim();
   if (!token) return null;
 
-  const row = await dbQueryOne<{
-    token: string;
-    role: string;
-    user_id: string | null;
-    email: string;
-    expires_at: string;
-  }>('SELECT token, role, user_id, email, expires_at FROM sessions WHERE token = $1', [token]);
+  const decoded = await verifyFirebaseBearerToken(header);
+  if (!decoded || !decoded.uid) return null;
 
-  if (!row) return null;
-  if (Date.parse(row.expires_at) < Date.now()) {
-    await dbExecute('DELETE FROM sessions WHERE token = $1', [token]);
-    return null;
+  const email = (decoded.email || '').toLowerCase();
+  const emailVerified = Boolean(decoded.email_verified);
+
+  let isAdmin = emailVerified && email === getConfiguredAdminEmail();
+  if (!isAdmin && emailVerified && hasServiceAccountCredentials()) {
+    try {
+      const adminSnap = await getAdminFirestore().doc(`admins/${decoded.uid}`).get();
+      isAdmin = adminSnap.exists;
+    } catch {
+      isAdmin = false;
+    }
   }
 
   return {
-    token: row.token,
-    role: row.role === 'admin' ? 'admin' : 'user',
-    userId: row.user_id,
-    email: row.email,
+    token,
+    role: isAdmin ? 'admin' : 'user',
+    userId: decoded.uid,
+    email,
+    emailVerified,
   };
 }
 
@@ -72,16 +63,16 @@ export async function requireMember(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const ctx = await resolveSessionFromRequest(req);
-    if (!ctx || ctx.role !== 'user' || !ctx.userId) {
-      res.status(401).json({ error: 'Unauthorized: Member sign-in required.' });
+    const ctx = await resolveFirebaseAuth(req);
+    if (!ctx || !ctx.userId) {
+      res.status(401).json({ error: 'Unauthorized: Valid Firebase ID token required.' });
       return;
     }
     req.auth = ctx;
     next();
   } catch (err) {
-    console.error('Auth verification error:', err);
-    res.status(500).json({ error: 'Authentication verification failed.' });
+    console.error('Firebase token verification failed:', err);
+    res.status(401).json({ error: 'Unauthorized: Invalid or expired Firebase session token.' });
   }
 }
 
@@ -91,15 +82,15 @@ export async function requireAdmin(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const ctx = await resolveSessionFromRequest(req);
-    if (!ctx || ctx.role !== 'admin') {
-      res.status(403).json({ error: 'Forbidden: Administrator authorization required.' });
+    const ctx = await resolveFirebaseAuth(req);
+    if (!ctx || ctx.role !== 'admin' || !ctx.emailVerified) {
+      res.status(403).json({ error: 'Forbidden: Verified administrator Firebase ID token required.' });
       return;
     }
     req.auth = ctx;
     next();
   } catch (err) {
-    console.error('Admin verification error:', err);
-    res.status(500).json({ error: 'Administrator verification failed.' });
+    console.error('Admin token verification failed:', err);
+    res.status(403).json({ error: 'Forbidden: Invalid administrator token.' });
   }
 }

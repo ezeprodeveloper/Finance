@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
-import os from 'node:os';
 import path from 'node:path';
 import { Pool } from 'pg';
 import { type MigrationRunSummary, runPendingMigrations } from './migrations.ts';
@@ -160,19 +159,15 @@ async function runPgQuery<T>(fn: (pool: Pool) => Promise<T>): Promise<T> {
 }
 
 function resolveWritableSqlitePath(): string {
-  const localPath = path.resolve(process.cwd(), '.data', 'efinance.sqlite');
-  if (!isServerlessRuntime()) {
-    try {
-      fs.mkdirSync(path.dirname(localPath), { recursive: true });
-      fs.accessSync(path.dirname(localPath), fs.constants.W_OK);
-      return localPath;
-    } catch {
-      // Fall back to system temp dir if project directory is read-only
-    }
+  if (isServerlessRuntime()) {
+    throw new Error(
+      'Ephemeral /tmp SQLite storage is disabled in serverless deployments. Use Cloud Firestore or configure POSTGRES_URL.',
+    );
   }
-  const tmpPath = path.join(os.tmpdir(), 'efinance-data', 'efinance.sqlite');
-  fs.mkdirSync(path.dirname(tmpPath), { recursive: true });
-  return tmpPath;
+  const localPath = path.resolve(process.cwd(), '.data', 'efinance.sqlite');
+  fs.mkdirSync(path.dirname(localPath), { recursive: true });
+  fs.accessSync(path.dirname(localPath), fs.constants.W_OK);
+  return localPath;
 }
 
 function getSqliteDb(): SqliteDatabase {

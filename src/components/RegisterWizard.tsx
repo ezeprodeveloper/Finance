@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, ArrowRight, CheckCircle2, Lock, Upload, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CheckCircle2, Eye, EyeOff, Lock, Upload, X } from 'lucide-react';
 import {
   EducationType,
   Gender,
@@ -8,7 +8,6 @@ import {
 import {
   generateAccountNumber,
   generateReferralCode,
-  hashPassword,
   isValidRwandaId,
   isValidRwandaPhone,
   readFileAsDataUrl,
@@ -65,6 +64,8 @@ export function RegisterWizard({
   const [referralCodeInput, setReferralCodeInput] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -188,7 +189,6 @@ export function RegisterWizard({
 
     setSubmitting(true);
     try {
-      const passwordHash = await hashPassword(password);
       const newUser: RegisteredUser = {
         id: `usr-${Date.now()}`,
         firstName: firstName.trim(),
@@ -213,7 +213,6 @@ export function RegisterWizard({
           akagari: akagari.trim() || undefined,
           umudugudu: umudugudu.trim() || undefined,
         },
-        passwordHash,
         accountNumber: generateAccountNumber(),
         referralCode: generateReferralCode(firstName.trim()),
         referredByUserId: referrer?.id,
@@ -624,31 +623,55 @@ export function RegisterWizard({
                   <label htmlFor="reg-password" className="block text-xs font-medium text-slate-700 mb-1">
                     Create Login Password *
                   </label>
-                  <input
-                    id="reg-password"
-                    type="password"
-                    minLength={8}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="At least 8 characters"
-                    required
-                    className="w-full h-10 px-3 text-sm bg-white border border-slate-300 rounded-lg text-slate-900"
-                  />
+                  <div className="relative">
+                    <input
+                      id="reg-password"
+                      type={showPassword ? 'text' : 'password'}
+                      minLength={8}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="At least 8 characters"
+                      required
+                      className="w-full h-10 pl-3 pr-10 text-sm bg-white border border-slate-300 rounded-lg text-slate-900"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((prev) => !prev)}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label htmlFor="reg-confirm-password" className="block text-xs font-medium text-slate-700 mb-1">
                     Confirm Password *
                   </label>
-                  <input
-                    id="reg-confirm-password"
-                    type="password"
-                    minLength={8}
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="Repeat password"
-                    required
-                    className="w-full h-10 px-3 text-sm bg-white border border-slate-300 rounded-lg text-slate-900"
-                  />
+                  <div className="relative">
+                    <input
+                      id="reg-confirm-password"
+                      type={showConfirmPassword ? 'text' : 'password'}
+                      minLength={8}
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Repeat password"
+                      required
+                      className="w-full h-10 pl-3 pr-10 text-sm bg-white border border-slate-300 rounded-lg text-slate-900"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPassword((prev) => !prev)}
+                      aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+                    >
+                      {showConfirmPassword ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
