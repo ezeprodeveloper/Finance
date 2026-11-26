@@ -6,6 +6,9 @@ import {defineConfig} from 'vite';
 
 function resolveBasePath(): string {
   const explicit = process.env.VITE_BASE_PATH?.trim();
+  if (explicit === './' || explicit === '.') {
+    return './';
+  }
   if (explicit && explicit !== '/' && explicit.length > 0) {
     return '/' + explicit.replace(/^\/+|\/+$/g, '') + '/';
   }

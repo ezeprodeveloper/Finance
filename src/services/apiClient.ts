@@ -31,29 +31,58 @@ export class ApiError extends Error {
   }
 }
 
+const IS_PHP_BACKEND = import.meta.env.VITE_PHP_BACKEND === 'true';
+
+function resolveApiUrl(path: string, methodOverride?: string): string {
+  if (!IS_PHP_BACKEND) {
+    return path;
+  }
+  const [rawRoute, rawQuery] = path.split('?');
+  const params = new URLSearchParams(rawQuery ?? '');
+  params.set('route', rawRoute);
+  if (methodOverride) {
+    params.set('_method', methodOverride);
+  }
+  return `./api.php?${params.toString()}`;
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
   token?: string | null,
 ): Promise<T> {
+  const originalMethod = (options.method ?? 'GET').toUpperCase();
+  const needsOverride = IS_PHP_BACKEND && (originalMethod === 'PUT' || originalMethod === 'DELETE');
+  const fetchMethod = needsOverride ? 'POST' : originalMethod;
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...((options.headers as Record<string, string>) ?? {}),
   };
+  if (needsOverride) {
+    headers['X-HTTP-Method-Override'] = originalMethod;
+  }
   if (token) {
     headers.Authorization = `Bearer ${token}`;
+    if (IS_PHP_BACKEND) {
+      headers['X-Auth-Token'] = token;
+    }
   }
 
-  const res = await fetch(path, {
-    ...options,
-    headers,
-  });
+  const res = await fetch(
+    resolveApiUrl(path, needsOverride ? originalMethod : undefined),
+    {
+      ...options,
+      method: fetchMethod,
+      headers,
+    },
+  );
 
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
     const fallbackMessage =
       res.status === 404
-        ? 'API endpoint unavailable (404). Verify the backend server or serverless /api function is deployed.'
+        ? 'API endpoint unavailable (404). Verify the backend server or API handler is running.'
         : `Request failed (${res.status})`;
     throw new ApiError(
       typeof data.error === 'string' ? data.error : fallbackMessage,
