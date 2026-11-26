@@ -1,20 +1,11 @@
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
 import { Pool } from 'pg';
 import { type MigrationRunSummary, runPendingMigrations } from './migrations.ts';
 
 export type SqlEngine = 'postgres' | 'sqlite';
-
-export class DatabaseConfigurationError extends Error {
-  code: 'MISSING_PRODUCTION_DATABASE';
-
-  constructor(message: string) {
-    super(message);
-    this.name = 'DatabaseConfigurationError';
-    this.code = 'MISSING_PRODUCTION_DATABASE';
-  }
-}
 
 interface SqliteStatement {
   all: (...params: unknown[]) => unknown[];
@@ -50,7 +41,7 @@ const POSTGRES_ENV_KEYS = [
   'PG_URL',
 ] as const;
 
-export function isServerlessProductionHost(): boolean {
+export function isServerlessRuntime(): boolean {
   return Boolean(
     process.env.VERCEL === '1' ||
       process.env.VERCEL_ENV ||
@@ -80,15 +71,7 @@ export function getPostgresConnectionString(): string | null {
 }
 
 export function getSqlEngine(): SqlEngine {
-  if (getPostgresConnectionString()) {
-    return 'postgres';
-  }
-  if (isServerlessProductionHost()) {
-    throw new DatabaseConfigurationError(
-      'Persistent PostgreSQL is not yet connected to this serverless deployment. Add DATABASE_URL or POSTGRES_URL (or connect a Vercel Storage Postgres integration) and redeploy — schema, indexes, migrations, and default settings will initialize automatically.',
-    );
-  }
-  return 'sqlite';
+  return getPostgresConnectionString() ? 'postgres' : 'sqlite';
 }
 
 function normalizePgUrlForPool(connStr: string): { url: string; useSsl: boolean } {
@@ -125,12 +108,10 @@ function getPgPool(): Pool {
   if (!globalThis._efinancePgPool) {
     const rawConn = getPostgresConnectionString();
     if (!rawConn) {
-      throw new DatabaseConfigurationError(
-        'PostgreSQL connection URL is not configured.',
-      );
+      throw new Error('PostgreSQL connection URL is not configured.');
     }
     const { url, useSsl } = normalizePgUrlForPool(rawConn);
-    const isServerless = isServerlessProductionHost();
+    const isServerless = isServerlessRuntime();
     const pool = new Pool({
       connectionString: url,
       max: isServerless ? 5 : 10,
@@ -178,19 +159,29 @@ async function runPgQuery<T>(fn: (pool: Pool) => Promise<T>): Promise<T> {
   }
 }
 
-function getSqliteDb(): SqliteDatabase {
-  if (isServerlessProductionHost()) {
-    throw new DatabaseConfigurationError(
-      'Local SQLite storage is disabled on serverless production hosts such as Vercel.',
-    );
+function resolveWritableSqlitePath(): string {
+  const localPath = path.resolve(process.cwd(), '.data', 'efinance.sqlite');
+  if (!isServerlessRuntime()) {
+    try {
+      fs.mkdirSync(path.dirname(localPath), { recursive: true });
+      fs.accessSync(path.dirname(localPath), fs.constants.W_OK);
+      return localPath;
+    } catch {
+      // Fall back to system temp dir if project directory is read-only
+    }
   }
+  const tmpPath = path.join(os.tmpdir(), 'efinance-data', 'efinance.sqlite');
+  fs.mkdirSync(path.dirname(tmpPath), { recursive: true });
+  return tmpPath;
+}
+
+function getSqliteDb(): SqliteDatabase {
   if (!globalThis._efinanceSqliteDb) {
     const require = createRequire(import.meta.url);
     const { DatabaseSync } = require('node:sqlite') as {
       DatabaseSync: new (filename: string) => SqliteDatabase;
     };
-    const dbPath = path.resolve(process.cwd(), '.data', 'efinance.sqlite');
-    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    const dbPath = resolveWritableSqlitePath();
     const db = new DatabaseSync(dbPath);
     db.exec('PRAGMA journal_mode = WAL;');
     db.exec('PRAGMA foreign_keys = ON;');
@@ -271,13 +262,12 @@ export function ensureSchema(): Promise<MigrationRunSummary> {
 
 export async function checkDatabaseStatus(): Promise<{
   connected: boolean;
-  engine: SqlEngine | 'unconfigured';
+  engine: SqlEngine;
   migrationSummary: MigrationRunSummary | null;
   error: string | null;
-  needsVercelPostgresStore: boolean;
 }> {
+  const engine = getSqlEngine();
   try {
-    const engine = getSqlEngine();
     const migrationSummary = await ensureSchema();
     await dbQueryOne('SELECT 1 AS ok');
     return {
@@ -285,16 +275,13 @@ export async function checkDatabaseStatus(): Promise<{
       engine,
       migrationSummary,
       error: null,
-      needsVercelPostgresStore: false,
     };
   } catch (err) {
-    const isMissingProdDb = err instanceof DatabaseConfigurationError;
     return {
       connected: false,
-      engine: isMissingProdDb ? 'unconfigured' : (getPostgresConnectionString() ? 'postgres' : 'sqlite'),
+      engine,
       migrationSummary: null,
       error: err instanceof Error ? err.message : 'Database connectivity check failed.',
-      needsVercelPostgresStore: isMissingProdDb,
     };
   }
 }

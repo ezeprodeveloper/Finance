@@ -66,14 +66,12 @@ async function request<T>(
 
 export interface SetupStatusResponse {
   dbReady: boolean;
-  engine: 'postgres' | 'sqlite' | 'unconfigured';
-  needsVercelPostgresStore: boolean;
+  engine: 'postgres' | 'sqlite';
   error: string | null;
   adminConfigured: boolean;
   migrationsApplied: number[];
   newlyApplied: number[];
   alreadyInitialized?: boolean;
-  setupMessage?: string;
 }
 
 export interface PublicBootstrapResponse {

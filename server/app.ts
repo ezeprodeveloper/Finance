@@ -2,7 +2,6 @@ import express from 'express';
 import { createAdminRouter } from './adminRoutes.ts';
 import {
   checkDatabaseStatus,
-  DatabaseConfigurationError,
   dbExecute,
   dbQuery,
   dbQueryOne,
@@ -25,6 +24,7 @@ import {
 
 export function createApiApp(): express.Express {
   const app = express();
+  app.set('trust proxy', 1);
   app.use(express.json({ limit: '15mb' }));
 
   app.get('/api/health', async (_req, res) => {
@@ -34,7 +34,6 @@ export function createApiApp(): express.Express {
         ok: false,
         connected: false,
         engine: dbStatus.engine,
-        needsVercelPostgresStore: dbStatus.needsVercelPostgresStore,
         error: dbStatus.error,
       });
       return;
@@ -53,7 +52,6 @@ export function createApiApp(): express.Express {
       res.status(200).json({
         dbReady: false,
         engine: dbStatus.engine,
-        needsVercelPostgresStore: dbStatus.needsVercelPostgresStore,
         error: dbStatus.error,
         adminConfigured: false,
         migrationsApplied: [],
@@ -75,16 +73,11 @@ export function createApiApp(): express.Express {
     res.json({
       dbReady: true,
       engine: dbStatus.engine,
-      needsVercelPostgresStore: false,
       error: null,
       adminConfigured,
       migrationsApplied: dbStatus.migrationSummary?.appliedVersions ?? [],
       newlyApplied,
       alreadyInitialized: dbStatus.migrationSummary?.alreadyInitialized ?? false,
-      setupMessage:
-        newlyApplied.length > 0
-          ? `Database automatically initialized (${dbStatus.engine}) with ${dbStatus.migrationSummary?.appliedVersions.length ?? 0} schema migrations and default settings.`
-          : `Database connected (${dbStatus.engine}) and existing data preserved.`,
     });
   });
 
@@ -95,13 +88,6 @@ export function createApiApp(): express.Express {
       next();
     } catch (err) {
       console.error('Database initialization error:', err);
-      if (err instanceof DatabaseConfigurationError) {
-        res.status(503).json({
-          error: err.message,
-          needsVercelPostgresStore: true,
-        });
-        return;
-      }
       res.status(500).json({ error: 'Database initialization failed.' });
     }
   });
