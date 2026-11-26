@@ -221,7 +221,7 @@ export function readFileAsDataUrl(file: File, maxSizeMb = 4): Promise<string> {
       }
       const img = new Image();
       img.onload = () => {
-        const maxDim = 760;
+        const maxDim = 640;
         let { width, height } = img;
         if (width > maxDim || height > maxDim) {
           if (width >= height) {
@@ -241,7 +241,10 @@ export function readFileAsDataUrl(file: File, maxSizeMb = 4): Promise<string> {
           return;
         }
         ctx.drawImage(img, 0, 0, width, height);
-        const compressed = canvas.toDataURL('image/jpeg', 0.78);
+        let compressed = canvas.toDataURL('image/jpeg', 0.72);
+        if (compressed.length > 180000) {
+          compressed = canvas.toDataURL('image/jpeg', 0.52);
+        }
         resolve(compressed.length < rawDataUrl.length ? compressed : rawDataUrl);
       };
       img.onerror = () => resolve(rawDataUrl);

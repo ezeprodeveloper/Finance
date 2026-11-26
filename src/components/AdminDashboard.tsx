@@ -28,6 +28,7 @@ import {
   FxExchangeRecord,
   LoanRequest,
   P2PTransfer,
+  PlatformNotification,
   RegisteredUser,
   ShortVideoCampaign,
   SystemSettings,
@@ -44,6 +45,7 @@ import {
   readFileAsDataUrl,
 } from '../utils/formatters';
 import { ColorChangingClock } from './ColorChangingClock';
+import { NotificationsBell } from './NotificationsBell';
 import { StatusLabel } from './StatusLabel';
 
 interface AdminDashboardProps {
@@ -93,6 +95,8 @@ interface AdminDashboardProps {
   onTogglePromotion: (promoId: string) => void;
   onDeletePromotion: (promoId: string) => void;
   onUpdateSettings: (next: SystemSettings) => void;
+  notifications?: PlatformNotification[];
+  onMarkNotificationRead?: (id: string) => void;
   onSignOut: () => void;
 }
 
@@ -330,7 +334,15 @@ export function AdminDashboard(props: AdminDashboardProps) {
             </div>
           </div>
 
-          <ColorChangingClock />
+          <div className="flex items-center gap-3 shrink-0">
+            {props.notifications && props.onMarkNotificationRead && (
+              <NotificationsBell
+                notifications={props.notifications}
+                onMarkRead={props.onMarkNotificationRead}
+              />
+            )}
+            <ColorChangingClock />
+          </div>
         </header>
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1200px] w-full mx-auto space-y-6">

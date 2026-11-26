@@ -1,0 +1,968 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default-deny global safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // Global Hardened Primitives
+    // -----------------------------------------------------------------------
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidPhoneKey(key) {
+      return key is string && key.size() >= 7 && key.size() <= 24 && key.matches('^\\+?[0-9]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isVerifiedEmail() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isVerifiedEmail() && (
+        request.auth.token.email == 'ezeprodeveloper@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isSafeUrl(val) {
+      return val is string && val.size() <= 500 && (val.matches('^https://.*') || val.matches('^http://.*'));
+    }
+
+    function isSafeMediaOrUrl(val) {
+      return val is string && val.size() > 0 && val.size() <= 500000 && (
+        val.matches('^https://.*') ||
+        val.matches('^http://.*') ||
+        val.matches('^data:video/.*') ||
+        val.matches('^data:image/.*')
+      );
+    }
+
+    // -----------------------------------------------------------------------
+    // Entity Validation Blueprints
+    // -----------------------------------------------------------------------
+    function isValidAdminRecord(data) {
+      return data.keys().hasAll(['uid', 'email', 'role', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'role', 'createdAt']) &&
+        isValidId(data.uid) &&
+        data.email is string && data.email.size() >= 5 && data.email.size() <= 191 &&
+        data.role in ['admin', 'super_admin'] &&
+        data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    function isValidSettings(data) {
+      return data.keys().hasAll([
+          'activationFeeRwf', 'welcomeBonusRwf', 'dailyCheckInRwf', 'withdrawalFeePercent',
+          'subsequentMinWithdrawalRwf', 'subsequentMaxWithdrawalRwf', 'referralCommissionPercent',
+          'minVideoRewardRwf', 'momoPayCode', 'sendMoneyTaxPercent', 'rwfPerUsdRate',
+          'binanceDepositAddress', 'platformTagline', 'maintenanceMode'
+        ]) &&
+        data.keys().hasOnly([
+          'activationFeeRwf', 'welcomeBonusRwf', 'dailyCheckInRwf', 'withdrawalFeePercent',
+          'subsequentMinWithdrawalRwf', 'subsequentMaxWithdrawalRwf', 'referralCommissionPercent',
+          'minVideoRewardRwf', 'momoPayCode', 'sendMoneyTaxPercent', 'rwfPerUsdRate',
+          'binanceDepositAddress', 'platformTagline', 'maintenanceMode', 'updatedAt'
+        ]) &&
+        data.activationFeeRwf is number && data.activationFeeRwf >= 0 &&
+        data.welcomeBonusRwf is number && data.welcomeBonusRwf >= 0 &&
+        data.dailyCheckInRwf is number && data.dailyCheckInRwf >= 0 &&
+        data.withdrawalFeePercent is number && data.withdrawalFeePercent >= 0 && data.withdrawalFeePercent <= 100 &&
+        data.subsequentMinWithdrawalRwf is number && data.subsequentMinWithdrawalRwf >= 0 &&
+        data.subsequentMaxWithdrawalRwf is number && data.subsequentMaxWithdrawalRwf >= data.subsequentMinWithdrawalRwf &&
+        data.referralCommissionPercent is number && data.referralCommissionPercent >= 0 && data.referralCommissionPercent <= 100 &&
+        data.minVideoRewardRwf is number && data.minVideoRewardRwf >= 0 &&
+        data.momoPayCode is string && data.momoPayCode.size() >= 1 && data.momoPayCode.size() <= 64 &&
+        data.sendMoneyTaxPercent is number && data.sendMoneyTaxPercent >= 0 && data.sendMoneyTaxPercent <= 100 &&
+        data.rwfPerUsdRate is number && data.rwfPerUsdRate >= 100 &&
+        data.binanceDepositAddress is string && data.binanceDepositAddress.size() <= 255 &&
+        data.platformTagline is string && data.platformTagline.size() <= 300 &&
+        data.maintenanceMode is bool &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidPromotion(data) {
+      return data.keys().hasAll(['id', 'title', 'summary', 'category', 'active', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'title', 'summary', 'category', 'active', 'createdAt']) &&
+        isValidId(data.id) &&
+        data.title is string && data.title.size() >= 2 && data.title.size() <= 200 &&
+        data.summary is string && data.summary.size() >= 2 && data.summary.size() <= 1500 &&
+        data.category is string && data.category.size() >= 2 && data.category.size() <= 100 &&
+        data.active is bool &&
+        data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    function isValidPhoneDir(data) {
+      return data.keys().hasAll(['email', 'userId']) &&
+        data.keys().hasOnly(['email', 'userId']) &&
+        data.email is string && data.email.size() >= 5 && data.email.size() <= 191 &&
+        isValidId(data.userId);
+    }
+
+    function isValidReferralDir(data) {
+      return data.keys().hasAll(['referralCode', 'userId']) &&
+        data.keys().hasOnly(['referralCode', 'userId']) &&
+        data.referralCode is string && data.referralCode.size() >= 3 && data.referralCode.size() <= 32 &&
+        isValidId(data.userId);
+    }
+
+    function isValidWalletDir(data) {
+      return data.keys().hasAll(['address', 'userId', 'fullName', 'createdAt']) &&
+        data.keys().hasOnly(['address', 'userId', 'fullName', 'createdAt']) &&
+        data.address is string && data.address.size() >= 4 && data.address.size() <= 40 &&
+        isValidId(data.userId) &&
+        data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 200 &&
+        data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    function isValidUserBase(data) {
+      return data.keys().hasAll([
+          'id', 'firstName', 'secondName', 'email', 'phone', 'gender', 'dateOfBirth', 'idNumber',
+          'photoDataUrl', 'education', 'residence', 'accountNumber', 'referralCode',
+          'spinCredits', 'hasCompletedFirstWithdrawal', 'accountStatus',
+          'walletBalanceRwf', 'bonusBalanceRwf', 'savingsBalanceRwf',
+          'walletBalanceUsd', 'usdtBalance', 'usdtSavingsBalance',
+          'lastCheckInAt', 'checkInStreak', 'kycStatus', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'firstName', 'secondName', 'email', 'phone', 'gender', 'dateOfBirth', 'idNumber',
+          'photoDataUrl', 'education', 'residence', 'passwordHash', 'accountNumber', 'referralCode',
+          'referredByUserId', 'spinCredits', 'hasCompletedFirstWithdrawal', 'accountStatus',
+          'activationPaymentRef', 'activationPaidPhone',
+          'walletBalanceRwf', 'bonusBalanceRwf', 'savingsBalanceRwf',
+          'walletBalanceUsd', 'usdtBalance', 'usdtSavingsBalance',
+          'lastCheckInAt', 'checkInStreak', 'kycStatus', 'kycData', 'lastTxId', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.firstName is string && data.firstName.size() >= 2 && data.firstName.size() <= 100 &&
+        data.secondName is string && data.secondName.size() >= 2 && data.secondName.size() <= 100 &&
+        data.email is string && data.email.size() >= 5 && data.email.size() <= 191 &&
+        data.phone is string && data.phone.size() >= 9 && data.phone.size() <= 32 &&
+        data.gender in ['Male', 'Female', 'Other'] &&
+        data.dateOfBirth is string && data.dateOfBirth.size() >= 4 && data.dateOfBirth.size() <= 32 &&
+        data.idNumber is string && data.idNumber.matches('^\\d{16}$') &&
+        data.photoDataUrl is string && data.photoDataUrl.size() >= 20 && data.photoDataUrl.size() <= 450000 &&
+        data.education is map &&
+        data.residence is map &&
+        data.accountNumber is string && data.accountNumber.size() >= 6 && data.accountNumber.size() <= 40 &&
+        data.referralCode is string && data.referralCode.size() >= 3 && data.referralCode.size() <= 32 &&
+        data.spinCredits is number && data.spinCredits >= 0 &&
+        data.hasCompletedFirstWithdrawal is bool &&
+        data.accountStatus in ['pending_approval', 'awaiting_payment', 'payment_submitted', 'active', 'suspended'] &&
+        data.walletBalanceRwf is number && data.walletBalanceRwf >= 0 &&
+        data.bonusBalanceRwf is number && data.bonusBalanceRwf >= 0 &&
+        data.savingsBalanceRwf is number && data.savingsBalanceRwf >= 0 &&
+        data.walletBalanceUsd is number && data.walletBalanceUsd >= 0 &&
+        data.usdtBalance is number && data.usdtBalance >= 0 &&
+        data.usdtSavingsBalance is number && data.usdtSavingsBalance >= 0 &&
+        (data.lastCheckInAt == null || (data.lastCheckInAt is string && data.lastCheckInAt.size() <= 64)) &&
+        data.checkInStreak is number && data.checkInStreak >= 0 &&
+        data.kycStatus in ['not_submitted', 'pending', 'approved', 'rejected'] &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        (!('passwordHash' in data) || (data.passwordHash is string && data.passwordHash.size() <= 200)) &&
+        (!('referredByUserId' in data) || data.referredByUserId == null || isValidId(data.referredByUserId)) &&
+        (!('activationPaymentRef' in data) || data.activationPaymentRef == null || (data.activationPaymentRef is string && data.activationPaymentRef.size() <= 128)) &&
+        (!('activationPaidPhone' in data) || data.activationPaidPhone == null || (data.activationPaidPhone is string && data.activationPaidPhone.size() <= 32)) &&
+        (!('kycData' in data) || data.kycData == null || data.kycData is map) &&
+        (!('lastTxId' in data) || data.lastTxId == null || isValidId(data.lastTxId)) &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidUserCreate(data, uid) {
+      return isValidUserBase(data) &&
+        data.id == uid &&
+        data.accountStatus == 'pending_approval' &&
+        data.kycStatus == 'not_submitted' &&
+        data.walletBalanceRwf == 0 &&
+        data.bonusBalanceRwf == 0 &&
+        data.savingsBalanceRwf == 0 &&
+        data.walletBalanceUsd == 0 &&
+        data.usdtBalance == 0 &&
+        data.usdtSavingsBalance == 0 &&
+        data.spinCredits == 0 &&
+        data.checkInStreak == 0 &&
+        data.hasCompletedFirstWithdrawal == false;
+    }
+
+    function isValidSavingsGoal(data) {
+      return data.keys().hasAll(['id', 'userId', 'title', 'planType', 'targetRwf', 'currentRwf', 'targetDate', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'userId', 'title', 'planType', 'targetRwf', 'currentRwf', 'targetDate', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        isValidId(data.userId) &&
+        data.title is string && data.title.size() >= 2 && data.title.size() <= 150 &&
+        data.planType in ['Flexible', 'Goal-Based', 'Long-Term'] &&
+        data.targetRwf is number && data.targetRwf > 0 &&
+        data.currentRwf is number && data.currentRwf >= 0 &&
+        data.targetDate is string && data.targetDate.size() <= 32 &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidLoan(data) {
+      return data.keys().hasAll([
+          'id', 'userId', 'userName', 'product', 'reason', 'principalRwf',
+          'termMonths', 'annualRatePercent', 'monthlyPaymentRwf', 'totalRepayableRwf',
+          'repaidRwf', 'status', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'userId', 'userName', 'product', 'reason', 'principalRwf',
+          'termMonths', 'annualRatePercent', 'monthlyPaymentRwf', 'totalRepayableRwf',
+          'repaidRwf', 'status', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.userId) &&
+        data.userName is string && data.userName.size() >= 2 && data.userName.size() <= 200 &&
+        data.product is string && data.product.size() >= 2 && data.product.size() <= 150 &&
+        data.reason is string && data.reason.size() >= 2 && data.reason.size() <= 500 &&
+        data.principalRwf is number && data.principalRwf > 0 &&
+        data.termMonths is number && data.termMonths >= 1 &&
+        data.annualRatePercent is number && data.annualRatePercent >= 0 &&
+        data.monthlyPaymentRwf is number && data.monthlyPaymentRwf >= 0 &&
+        data.totalRepayableRwf is number && data.totalRepayableRwf >= data.principalRwf &&
+        data.repaidRwf is number && data.repaidRwf >= 0 &&
+        data.status in ['pending_admin', 'approved', 'repaid', 'rejected'] &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidInvestment(data) {
+      return data.keys().hasAll([
+          'id', 'userId', 'userName', 'tierId', 'planName', 'depositRwf',
+          'dailyReturnRwf', 'paymentCode', 'paymentRef', 'status', 'totalEarnedRwf',
+          'lastRoiCreditedAt', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'userId', 'userName', 'tierId', 'planName', 'depositRwf',
+          'dailyReturnRwf', 'paymentCode', 'paymentRef', 'status', 'totalEarnedRwf',
+          'lastRoiCreditedAt', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.userId) &&
+        data.userName is string && data.userName.size() >= 2 && data.userName.size() <= 200 &&
+        data.tierId is string && data.tierId.size() >= 2 && data.tierId.size() <= 64 &&
+        data.planName is string && data.planName.size() >= 2 && data.planName.size() <= 150 &&
+        data.depositRwf is number && data.depositRwf > 0 &&
+        data.dailyReturnRwf is number && data.dailyReturnRwf > 0 &&
+        data.paymentCode is string && data.paymentCode.size() <= 128 &&
+        data.paymentRef is string && data.paymentRef.size() >= 3 && data.paymentRef.size() <= 128 &&
+        data.status in ['pending_admin', 'active', 'completed', 'rejected'] &&
+        data.totalEarnedRwf is number && data.totalEarnedRwf >= 0 &&
+        (data.lastRoiCreditedAt == null || (data.lastRoiCreditedAt is string && data.lastRoiCreditedAt.size() <= 64)) &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidSpin(data) {
+      return data.keys().hasAll(['id', 'userId', 'rewardRwf', 'spunAt']) &&
+        data.keys().hasOnly(['id', 'userId', 'rewardRwf', 'spunAt']) &&
+        isValidId(data.id) &&
+        isValidId(data.userId) &&
+        data.rewardRwf is number && data.rewardRwf >= 0 && data.rewardRwf <= 200 &&
+        data.spunAt is string && data.spunAt.size() <= 64;
+    }
+
+    function isValidWithdrawal(data) {
+      return data.keys().hasAll([
+          'id', 'userId', 'userName', 'network', 'destinationType', 'destinationValue',
+          'accountRegisteredNames', 'grossAmountRwf', 'feePercent', 'feeRwf', 'netAmountRwf',
+          'isFirstBonusWithdrawal', 'status', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'userId', 'userName', 'network', 'destinationType', 'destinationValue',
+          'accountRegisteredNames', 'grossAmountRwf', 'feePercent', 'feeRwf', 'netAmountRwf',
+          'isFirstBonusWithdrawal', 'status', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.userId) &&
+        data.userName is string && data.userName.size() >= 2 && data.userName.size() <= 200 &&
+        data.network in ['MTN Rwanda', 'Airtel / Tigo Rwanda'] &&
+        data.destinationType in ['Phone Number', 'MoMo Pay Code'] &&
+        data.destinationValue is string && data.destinationValue.size() >= 2 && data.destinationValue.size() <= 128 &&
+        data.accountRegisteredNames is string && data.accountRegisteredNames.size() >= 2 && data.accountRegisteredNames.size() <= 200 &&
+        data.grossAmountRwf is number && data.grossAmountRwf > 0 &&
+        data.feePercent is number && data.feePercent >= 0 && data.feePercent <= 100 &&
+        data.feeRwf is number && data.feeRwf >= 0 &&
+        data.netAmountRwf is number && data.netAmountRwf >= 0 &&
+        data.isFirstBonusWithdrawal is bool &&
+        data.status in ['pending_admin', 'paid', 'rejected'] &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidVideo(data) {
+      return data.keys().hasAll([
+          'id', 'creatorId', 'creatorName', 'title', 'description', 'videoUrl',
+          'rewardPerViewRwf', 'targetViewers', 'totalBudgetRwf', 'paymentCode', 'paymentRef',
+          'watchedByUserIds', 'status', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'creatorId', 'creatorName', 'title', 'description', 'videoUrl',
+          'rewardPerViewRwf', 'targetViewers', 'totalBudgetRwf', 'paymentCode', 'paymentRef',
+          'watchedByUserIds', 'status', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.creatorId) &&
+        data.creatorName is string && data.creatorName.size() >= 2 && data.creatorName.size() <= 200 &&
+        data.title is string && data.title.size() >= 2 && data.title.size() <= 200 &&
+        data.description is string && data.description.size() <= 1000 &&
+        isSafeMediaOrUrl(data.videoUrl) &&
+        data.rewardPerViewRwf is number && data.rewardPerViewRwf >= 1 &&
+        data.targetViewers is number && data.targetViewers >= 1 && data.targetViewers <= 5000 &&
+        data.totalBudgetRwf is number && data.totalBudgetRwf >= 1 &&
+        data.paymentCode is string && data.paymentCode.size() <= 128 &&
+        data.paymentRef is string && data.paymentRef.size() >= 3 && data.paymentRef.size() <= 128 &&
+        data.watchedByUserIds is list && data.watchedByUserIds.size() <= 5000 &&
+        data.status in ['pending_admin', 'active', 'completed', 'rejected'] &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidTask(data) {
+      return data.keys().hasAll([
+          'id', 'creatorId', 'creatorName', 'title', 'requirements',
+          'rewardPerCompletionRwf', 'targetCompletions', 'totalBudgetRwf',
+          'paymentCode', 'paymentRef', 'approvedWorkerIds', 'status', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'creatorId', 'creatorName', 'title', 'requirements',
+          'rewardPerCompletionRwf', 'targetCompletions', 'totalBudgetRwf',
+          'paymentCode', 'paymentRef', 'approvedWorkerIds', 'status', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.creatorId) &&
+        data.creatorName is string && data.creatorName.size() >= 2 && data.creatorName.size() <= 200 &&
+        data.title is string && data.title.size() >= 2 && data.title.size() <= 200 &&
+        data.requirements is string && data.requirements.size() >= 2 && data.requirements.size() <= 2000 &&
+        data.rewardPerCompletionRwf is number && data.rewardPerCompletionRwf >= 1 &&
+        data.targetCompletions is number && data.targetCompletions >= 1 && data.targetCompletions <= 5000 &&
+        data.totalBudgetRwf is number && data.totalBudgetRwf >= 1 &&
+        data.paymentCode is string && data.paymentCode.size() <= 128 &&
+        data.paymentRef is string && data.paymentRef.size() >= 3 && data.paymentRef.size() <= 128 &&
+        data.approvedWorkerIds is list && data.approvedWorkerIds.size() <= 5000 &&
+        data.status in ['pending_admin', 'active', 'completed', 'rejected'] &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidSubmission(data) {
+      return data.keys().hasAll([
+          'id', 'taskId', 'taskTitle', 'workerId', 'workerName',
+          'proofText', 'rewardRwf', 'status', 'submittedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'taskId', 'taskTitle', 'workerId', 'workerName',
+          'proofText', 'proofUrl', 'rewardRwf', 'status', 'adminNote', 'submittedAt', 'reviewedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.taskId) &&
+        data.taskTitle is string && data.taskTitle.size() >= 2 && data.taskTitle.size() <= 200 &&
+        isValidId(data.workerId) &&
+        data.workerName is string && data.workerName.size() >= 2 && data.workerName.size() <= 200 &&
+        data.proofText is string && data.proofText.size() >= 3 && data.proofText.size() <= 2000 &&
+        data.rewardRwf is number && data.rewardRwf >= 0 &&
+        data.status in ['pending_admin', 'approved', 'rejected'] &&
+        data.submittedAt is string && data.submittedAt.size() <= 64 &&
+        (!('proofUrl' in data) || data.proofUrl == null || isSafeUrl(data.proofUrl)) &&
+        (!('adminNote' in data) || data.adminNote == null || (data.adminNote is string && data.adminNote.size() <= 500)) &&
+        (!('reviewedAt' in data) || data.reviewedAt == null || (data.reviewedAt is string && data.reviewedAt.size() <= 64));
+    }
+
+    function isValidBetSession(data) {
+      return data.keys().hasAll([
+          'id', 'userId', 'userName', 'category', 'stakeRwf',
+          'questionsAnswered', 'multiplier', 'payoutRwf', 'status', 'endedReason', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'userId', 'userName', 'category', 'stakeRwf',
+          'questionsAnswered', 'multiplier', 'payoutRwf', 'status', 'endedReason', 'createdAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.userId) &&
+        data.userName is string && data.userName.size() >= 2 && data.userName.size() <= 200 &&
+        data.category in ['math', 'physics', 'world', 'mixed'] &&
+        data.stakeRwf is number && data.stakeRwf >= 100 &&
+        data.questionsAnswered is number && data.questionsAnswered >= 0 && data.questionsAnswered <= 20 &&
+        data.multiplier is number && data.multiplier >= 0 && data.multiplier <= 10 &&
+        data.payoutRwf is number && data.payoutRwf >= 0 && data.payoutRwf <= data.stakeRwf * 10 &&
+        data.status in ['won_cashed_out', 'lost'] &&
+        data.endedReason is string && data.endedReason.size() <= 300 &&
+        data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    function isValidAirtime(data) {
+      return data.keys().hasAll([
+          'id', 'userId', 'userName', 'network', 'serviceType',
+          'phoneNumber', 'amountRwf', 'status', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'userId', 'userName', 'network', 'serviceType',
+          'phoneNumber', 'amountRwf', 'bundleLabel', 'status', 'adminNote', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.userId) &&
+        data.userName is string && data.userName.size() >= 2 && data.userName.size() <= 200 &&
+        data.network in ['MTN Rwanda', 'Airtel Rwanda'] &&
+        data.serviceType in ['Airtime', 'Internet Bundle'] &&
+        data.phoneNumber is string && data.phoneNumber.size() >= 9 && data.phoneNumber.size() <= 32 &&
+        data.amountRwf is number && data.amountRwf >= 100 &&
+        data.status in ['pending_admin', 'approved', 'rejected'] &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        (!('bundleLabel' in data) || data.bundleLabel == null || (data.bundleLabel is string && data.bundleLabel.size() <= 150)) &&
+        (!('adminNote' in data) || data.adminNote == null || (data.adminNote is string && data.adminNote.size() <= 500)) &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidP2P(data) {
+      return data.keys().hasAll([
+          'id', 'senderId', 'senderName', 'senderAddress',
+          'receiverId', 'receiverName', 'receiverAddress',
+          'grossAmountRwf', 'taxPercent', 'taxRwf', 'netAmountRwf',
+          'status', 'claimedByReceiver', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'senderId', 'senderName', 'senderAddress',
+          'receiverId', 'receiverName', 'receiverAddress',
+          'grossAmountRwf', 'taxPercent', 'taxRwf', 'netAmountRwf',
+          'note', 'status', 'claimedByReceiver', 'createdAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.senderId) &&
+        isValidId(data.receiverId) &&
+        data.senderId != data.receiverId &&
+        data.senderName is string && data.senderName.size() >= 2 && data.senderName.size() <= 200 &&
+        data.receiverName is string && data.receiverName.size() >= 2 && data.receiverName.size() <= 200 &&
+        data.senderAddress is string && data.senderAddress.size() >= 4 && data.senderAddress.size() <= 40 &&
+        data.receiverAddress is string && data.receiverAddress.size() >= 4 && data.receiverAddress.size() <= 40 &&
+        data.grossAmountRwf is number && data.grossAmountRwf >= 100 &&
+        data.taxPercent is number && data.taxPercent >= 0 && data.taxPercent <= 100 &&
+        data.taxRwf is number && data.taxRwf >= 0 &&
+        data.netAmountRwf is number && data.netAmountRwf >= 0 &&
+        data.netAmountRwf <= data.grossAmountRwf &&
+        data.status == 'completed' &&
+        data.claimedByReceiver is bool &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        (!('note' in data) || data.note == null || (data.note is string && data.note.size() <= 300));
+    }
+
+    function isValidFx(data) {
+      return data.keys().hasAll(['id', 'userId', 'userName', 'direction', 'fromAmount', 'toAmount', 'rateApplied', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'userId', 'userName', 'direction', 'fromAmount', 'toAmount', 'rateApplied', 'createdAt']) &&
+        isValidId(data.id) &&
+        isValidId(data.userId) &&
+        data.userName is string && data.userName.size() >= 2 && data.userName.size() <= 200 &&
+        data.direction in ['RWF_TO_USD', 'USD_TO_RWF', 'USD_TO_USDT', 'USDT_TO_USD'] &&
+        data.fromAmount is number && data.fromAmount > 0 &&
+        data.toAmount is number && data.toAmount > 0 &&
+        data.rateApplied is number && data.rateApplied > 0 &&
+        data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    function isValidUsdtRequest(data) {
+      return data.keys().hasAll([
+          'id', 'userId', 'userName', 'actionType', 'amountUsdt',
+          'network', 'destinationOrTxRef', 'status', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'userId', 'userName', 'actionType', 'amountUsdt',
+          'network', 'destinationOrTxRef', 'note', 'status', 'adminNote', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.userId) &&
+        data.userName is string && data.userName.size() >= 2 && data.userName.size() <= 200 &&
+        data.actionType in ['deposit', 'withdraw', 'send_binance'] &&
+        data.amountUsdt is number && data.amountUsdt >= 1 &&
+        data.network in ['BEP20 (BSC)', 'TRC20 (Tron)', 'ERC20', 'Binance Pay'] &&
+        data.destinationOrTxRef is string && data.destinationOrTxRef.size() >= 4 && data.destinationOrTxRef.size() <= 255 &&
+        data.status in ['pending_admin', 'approved', 'rejected'] &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        (!('note' in data) || data.note == null || (data.note is string && data.note.size() <= 400)) &&
+        (!('adminNote' in data) || data.adminNote == null || (data.adminNote is string && data.adminNote.size() <= 500)) &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidTransaction(data) {
+      return data.keys().hasAll([
+          'id', 'userId', 'reference', 'title', 'category',
+          'channel', 'amountRwf', 'direction', 'status', 'timestamp'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'userId', 'reference', 'title', 'category',
+          'channel', 'amountRwf', 'feeRwf', 'direction', 'status', 'timestamp'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.userId) &&
+        data.reference is string && data.reference.size() >= 3 && data.reference.size() <= 64 &&
+        data.title is string && data.title.size() >= 2 && data.title.size() <= 255 &&
+        data.category is string && data.category.size() >= 2 && data.category.size() <= 64 &&
+        data.channel is string && data.channel.size() >= 2 && data.channel.size() <= 255 &&
+        data.amountRwf is number && data.amountRwf >= 0 &&
+        data.direction in ['credit', 'debit'] &&
+        data.status in ['Completed', 'Pending Review', 'Rejected'] &&
+        data.timestamp is string && data.timestamp.size() <= 64 &&
+        (!('feeRwf' in data) || data.feeRwf == null || (data.feeRwf is number && data.feeRwf >= 0));
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['id', 'recipientId', 'title', 'message', 'category', 'read', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'recipientId', 'title', 'message', 'category', 'read', 'createdAt']) &&
+        isValidId(data.id) &&
+        isValidId(data.recipientId) &&
+        data.title is string && data.title.size() >= 2 && data.title.size() <= 200 &&
+        data.message is string && data.message.size() >= 2 && data.message.size() <= 600 &&
+        data.category is string && data.category.size() >= 2 && data.category.size() <= 64 &&
+        data.read is bool &&
+        data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    function isValidPublicStats(data) {
+      return data.keys().hasAll(['totalActiveVideos', 'totalActiveTasks']) &&
+        data.keys().hasOnly(['totalActiveVideos', 'totalActiveTasks', 'updatedAt']) &&
+        data.totalActiveVideos is number && data.totalActiveVideos >= 0 &&
+        data.totalActiveTasks is number && data.totalActiveTasks >= 0 &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    // -----------------------------------------------------------------------
+    // Collection Match Rules
+    // -----------------------------------------------------------------------
+    match /test/{docId} {
+      allow get: if docId == 'connection';
+      allow list, create, update, delete: if false;
+    }
+
+    match /admins/{adminId} {
+      allow get: if isOwner(adminId) || isAdmin();
+      allow list: if isAdmin();
+      allow create, update: if isAdmin() && isValidId(adminId) && isValidAdminRecord(incoming());
+      allow delete: if isAdmin() && isValidId(adminId);
+    }
+
+    match /settings/{settingId} {
+      allow get: if isValidId(settingId) && (settingId == 'platform' || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if isAdmin() && isValidId(settingId) && isValidSettings(incoming());
+      allow delete: if false;
+    }
+
+    match /publicStats/{statId} {
+      allow get: if statId == 'overview';
+      allow list: if false;
+      allow create, update: if isAdmin() && statId == 'overview' && isValidPublicStats(incoming());
+      allow delete: if false;
+    }
+
+    match /promotions/{promotionId} {
+      allow get: if isValidId(promotionId) && (existing().active == true || isAdmin());
+      allow list: if existing().active == true || isAdmin();
+      allow create, update: if isAdmin() && isValidId(promotionId) && isValidPromotion(incoming());
+      allow delete: if isAdmin() && isValidId(promotionId);
+    }
+
+    match /phoneDirectory/{phoneKey} {
+      allow get: if isValidPhoneKey(phoneKey);
+      allow list: if false;
+      allow create: if isSignedIn() && isValidPhoneKey(phoneKey) && isValidPhoneDir(incoming()) && incoming().userId == request.auth.uid;
+      allow update: if isAdmin() && isValidPhoneKey(phoneKey) && isValidPhoneDir(incoming());
+      allow delete: if isAdmin() || (isSignedIn() && isValidPhoneKey(phoneKey) && existing().userId == request.auth.uid);
+    }
+
+    match /referralDirectory/{referralCode} {
+      allow get: if isSignedIn() && isValidId(referralCode);
+      allow list: if false;
+      allow create: if isSignedIn() && isValidId(referralCode) && isValidReferralDir(incoming()) && incoming().userId == request.auth.uid;
+      allow update: if isAdmin() && isValidId(referralCode) && isValidReferralDir(incoming());
+      allow delete: if isAdmin() && isValidId(referralCode);
+    }
+
+    match /walletDirectory/{accountNumber} {
+      allow get: if isSignedIn() && isValidId(accountNumber);
+      allow list: if false;
+      allow create: if isSignedIn() && isValidId(accountNumber) && isValidWalletDir(incoming()) && incoming().userId == request.auth.uid;
+      allow update: if isAdmin() && isValidId(accountNumber) && isValidWalletDir(incoming());
+      allow delete: if isAdmin() && isValidId(accountNumber);
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isSignedIn() && (existing().id == request.auth.uid || isAdmin());
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUserCreate(incoming(), userId);
+      allow update: if isValidId(userId) && isSignedIn() && isValidUserBase(incoming()) && (
+        isAdmin() || (
+          isOwner(userId) &&
+          incoming().id == existing().id &&
+          incoming().email == existing().email &&
+          incoming().photoDataUrl == existing().photoDataUrl &&
+          incoming().accountNumber == existing().accountNumber &&
+          incoming().referralCode == existing().referralCode &&
+          incoming().bonusBalanceRwf == existing().bonusBalanceRwf &&
+          incoming().hasCompletedFirstWithdrawal == existing().hasCompletedFirstWithdrawal &&
+          incoming().createdAt == existing().createdAt &&
+          (
+            // Action 1: Submit activation payment reference
+            (
+              existing().accountStatus in ['pending_approval', 'awaiting_payment'] &&
+              incoming().accountStatus == 'payment_submitted' &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['accountStatus', 'activationPaidPhone', 'activationPaymentRef', 'updatedAt'])
+            ) ||
+            // Action 2: Submit Rwanda KYC verification details
+            (
+              existing().kycStatus in ['not_submitted', 'rejected'] &&
+              incoming().kycStatus == 'pending' &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['kycStatus', 'kycData', 'updatedAt'])
+            ) ||
+            // Action 3: Daily check-in reward
+            (
+              existing().accountStatus == 'active' &&
+              incoming().checkInStreak == existing().checkInStreak + 1 &&
+              incoming().lastCheckInAt is string &&
+              (existing().lastCheckInAt == null || incoming().lastCheckInAt != existing().lastCheckInAt) &&
+              (
+                (!exists(/databases/$(database)/documents/settings/platform) &&
+                  incoming().walletBalanceRwf >= existing().walletBalanceRwf &&
+                  incoming().walletBalanceRwf <= existing().walletBalanceRwf + 20) ||
+                (exists(/databases/$(database)/documents/settings/platform) &&
+                  incoming().walletBalanceRwf == existing().walletBalanceRwf + get(/databases/$(database)/documents/settings/platform).data.dailyCheckInRwf)
+              ) &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['walletBalanceRwf', 'lastCheckInAt', 'checkInStreak', 'updatedAt'])
+            ) ||
+            // Action 4: Smart Savings deposit/withdrawal (conservation of RWF)
+            (
+              existing().accountStatus == 'active' &&
+              existing().kycStatus == 'approved' &&
+              (incoming().walletBalanceRwf + incoming().savingsBalanceRwf == existing().walletBalanceRwf + existing().savingsBalanceRwf) &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['walletBalanceRwf', 'savingsBalanceRwf', 'updatedAt'])
+            ) ||
+            // Action 5: USDT Savings vault transfer (conservation of USDT)
+            (
+              existing().accountStatus == 'active' &&
+              (incoming().usdtBalance + incoming().usdtSavingsBalance >= existing().usdtBalance + existing().usdtSavingsBalance - 0.02) &&
+              (incoming().usdtBalance + incoming().usdtSavingsBalance <= existing().usdtBalance + existing().usdtSavingsBalance + 0.02) &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['usdtBalance', 'usdtSavingsBalance', 'updatedAt'])
+            ) ||
+            // Action 6: Wallet debit (withdraw hold, airtime, loan repay, quiz stake, P2P send)
+            (
+              existing().accountStatus == 'active' &&
+              incoming().walletBalanceRwf < existing().walletBalanceRwf &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['walletBalanceRwf', 'updatedAt'])
+            ) ||
+            // Action 7: Lucky spin reward (decrements spinCredits by 1, capped <= 200 RWF)
+            (
+              existing().accountStatus == 'active' &&
+              existing().spinCredits >= 1 &&
+              incoming().spinCredits == existing().spinCredits - 1 &&
+              incoming().walletBalanceRwf >= existing().walletBalanceRwf &&
+              incoming().walletBalanceRwf <= existing().walletBalanceRwf + 200 &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['spinCredits', 'walletBalanceRwf', 'updatedAt'])
+            ) ||
+            // Action 8a: Atomic Video Watch Reward coupled to videoCampaigns update
+            (
+              existing().accountStatus == 'active' &&
+              'lastTxId' in incoming() &&
+              incoming().lastTxId is string &&
+              isValidId(incoming().lastTxId) &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['walletBalanceRwf', 'lastTxId', 'updatedAt']) &&
+              get(/databases/$(database)/documents/videoCampaigns/$(incoming().lastTxId)).data.status == 'active' &&
+              !(userId in get(/databases/$(database)/documents/videoCampaigns/$(incoming().lastTxId)).data.watchedByUserIds) &&
+              userId in getAfter(/databases/$(database)/documents/videoCampaigns/$(incoming().lastTxId)).data.watchedByUserIds &&
+              incoming().walletBalanceRwf == existing().walletBalanceRwf + get(/databases/$(database)/documents/videoCampaigns/$(incoming().lastTxId)).data.rewardPerViewRwf
+            ) ||
+            // Action 8b: Atomic P2P Receiver Claim coupled to p2pTransfers update
+            (
+              existing().accountStatus == 'active' &&
+              'lastTxId' in incoming() &&
+              incoming().lastTxId is string &&
+              isValidId(incoming().lastTxId) &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['walletBalanceRwf', 'lastTxId', 'updatedAt']) &&
+              get(/databases/$(database)/documents/p2pTransfers/$(incoming().lastTxId)).data.receiverId == userId &&
+              get(/databases/$(database)/documents/p2pTransfers/$(incoming().lastTxId)).data.claimedByReceiver == false &&
+              getAfter(/databases/$(database)/documents/p2pTransfers/$(incoming().lastTxId)).data.claimedByReceiver == true &&
+              incoming().walletBalanceRwf == existing().walletBalanceRwf + get(/databases/$(database)/documents/p2pTransfers/$(incoming().lastTxId)).data.netAmountRwf
+            ) ||
+            // Action 8c: Atomic Quiz Bet Cashout Win coupled to betSessions creation
+            (
+              existing().accountStatus == 'active' &&
+              'lastTxId' in incoming() &&
+              incoming().lastTxId is string &&
+              isValidId(incoming().lastTxId) &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['walletBalanceRwf', 'lastTxId', 'updatedAt']) &&
+              getAfter(/databases/$(database)/documents/betSessions/$(incoming().lastTxId)).data.userId == userId &&
+              getAfter(/databases/$(database)/documents/betSessions/$(incoming().lastTxId)).data.status == 'won_cashed_out' &&
+              getAfter(/databases/$(database)/documents/betSessions/$(incoming().lastTxId)).data.payoutRwf > 0 &&
+              incoming().walletBalanceRwf == existing().walletBalanceRwf + getAfter(/databases/$(database)/documents/betSessions/$(incoming().lastTxId)).data.payoutRwf
+            ) ||
+            // Action 8d: Atomic Investment Daily ROI Credit coupled to investments update
+            (
+              existing().accountStatus == 'active' &&
+              'lastTxId' in incoming() &&
+              incoming().lastTxId is string &&
+              isValidId(incoming().lastTxId) &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['walletBalanceRwf', 'lastTxId', 'updatedAt']) &&
+              get(/databases/$(database)/documents/investments/$(incoming().lastTxId)).data.userId == userId &&
+              get(/databases/$(database)/documents/investments/$(incoming().lastTxId)).data.status == 'active' &&
+              getAfter(/databases/$(database)/documents/investments/$(incoming().lastTxId)).data.totalEarnedRwf > get(/databases/$(database)/documents/investments/$(incoming().lastTxId)).data.totalEarnedRwf &&
+              incoming().walletBalanceRwf == existing().walletBalanceRwf + (getAfter(/databases/$(database)/documents/investments/$(incoming().lastTxId)).data.totalEarnedRwf - get(/databases/$(database)/documents/investments/$(incoming().lastTxId)).data.totalEarnedRwf)
+            ) ||
+            // Action 9: Atomic FX Exchange across RWF / USD / USDT coupled to fxExchanges record
+            (
+              existing().accountStatus == 'active' &&
+              'lastTxId' in incoming() &&
+              incoming().lastTxId is string &&
+              isValidId(incoming().lastTxId) &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['walletBalanceRwf', 'walletBalanceUsd', 'usdtBalance', 'lastTxId', 'updatedAt']) &&
+              getAfter(/databases/$(database)/documents/fxExchanges/$(incoming().lastTxId)).data.userId == userId &&
+              (
+                (
+                  getAfter(/databases/$(database)/documents/fxExchanges/$(incoming().lastTxId)).data.direction == 'RWF_TO_USD' &&
+                  incoming().walletBalanceRwf == existing().walletBalanceRwf - getAfter(/databases/$(database)/documents/fxExchanges/$(incoming().lastTxId)).data.fromAmount &&
+                  incoming().walletBalanceUsd <= existing().walletBalanceUsd + (getAfter(/databases/$(database)/documents/fxExchanges/$(incoming().lastTxId)).data.fromAmount / getAfter(/databases/$(database)/documents/fxExchanges/$(incoming().lastTxId)).data.rateApplied) + 0.02 &&
+                  getAfter(/databases/$(database)/documents/fxExchanges/$(incoming().lastTxId)).data.rateApplied >= 100 &&
+                  incoming().usdtBalance == existing().usdtBalance
+                ) ||
+                (
+                  getAfter(/databases/$(database)/documents/fxExchanges/$(incoming().lastTxId)).data.direction == 'USD_TO_RWF' &&
+                  incoming().walletBalanceUsd <= existing().walletBalanceUsd - getAfter(/databases/$(database)/documents/fxExchanges/$(incoming().lastTxId)).data.fromAmount + 0.01 &&
+                  incoming().walletBalanceRwf <= existing().walletBalanceRwf + (getAfter(/databases/$(database)/documents/fxExchanges/$(incoming().lastTxId)).data.fromAmount * getAfter(/databases/$(database)/documents/fxExchanges/$(incoming().lastTxId)).data.rateApplied) + 2 &&
+                  getAfter(/databases/$(database)/documents/fxExchanges/$(incoming().lastTxId)).data.rateApplied >= 100 &&
+                  incoming().usdtBalance == existing().usdtBalance
+                ) ||
+                (
+                  getAfter(/databases/$(database)/documents/fxExchanges/$(incoming().lastTxId)).data.direction in ['USD_TO_USDT', 'USDT_TO_USD'] &&
+                  incoming().walletBalanceRwf == existing().walletBalanceRwf &&
+                  incoming().walletBalanceUsd + incoming().usdtBalance >= existing().walletBalanceUsd + existing().usdtBalance - 0.02 &&
+                  incoming().walletBalanceUsd + incoming().usdtBalance <= existing().walletBalanceUsd + existing().usdtBalance + 0.02
+                )
+              )
+            ) ||
+            // Action 10: USDT withdraw/send hold debit
+            (
+              existing().accountStatus == 'active' &&
+              incoming().usdtBalance < existing().usdtBalance &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['usdtBalance', 'updatedAt'])
+            )
+          )
+        )
+      );
+      allow delete: if isAdmin() && isValidId(userId);
+    }
+
+    match /savingsGoals/{goalId} {
+      allow get: if isValidId(goalId) && (isOwner(existing().userId) || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(goalId) && isOwner(incoming().userId) && isValidSavingsGoal(incoming()) &&
+        incoming().currentRwf == 0 &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.kycStatus == 'approved';
+      allow update: if isValidId(goalId) && isValidSavingsGoal(incoming()) && (
+        isAdmin() || (
+          isOwner(existing().userId) &&
+          incoming().id == existing().id &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['currentRwf', 'updatedAt'])
+        )
+      );
+      allow delete: if isAdmin() && isValidId(goalId);
+    }
+
+    match /loans/{loanId} {
+      allow get: if isValidId(loanId) && (isOwner(existing().userId) || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(loanId) && isOwner(incoming().userId) && isValidLoan(incoming()) &&
+        incoming().status == 'pending_admin' &&
+        incoming().repaidRwf == 0 &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.savingsBalanceRwf > incoming().principalRwf;
+      allow update: if isValidId(loanId) && isValidLoan(incoming()) && (
+        isAdmin() || (
+          isOwner(existing().userId) &&
+          existing().status == 'approved' &&
+          incoming().id == existing().id &&
+          incoming().userId == existing().userId &&
+          incoming().principalRwf == existing().principalRwf &&
+          incoming().totalRepayableRwf == existing().totalRepayableRwf &&
+          incoming().repaidRwf > existing().repaidRwf &&
+          incoming().status in ['approved', 'repaid'] &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['repaidRwf', 'status', 'updatedAt'])
+        )
+      );
+      allow delete: if isAdmin() && isValidId(loanId);
+    }
+
+    match /investments/{investmentId} {
+      allow get: if isValidId(investmentId) && (isOwner(existing().userId) || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(investmentId) && isOwner(incoming().userId) && isValidInvestment(incoming()) &&
+        incoming().status == 'pending_admin' &&
+        incoming().totalEarnedRwf == 0;
+      allow update: if isValidId(investmentId) && isValidInvestment(incoming()) && (
+        isAdmin() || (
+          isOwner(existing().userId) &&
+          existing().status == 'active' &&
+          incoming().id == existing().id &&
+          incoming().userId == existing().userId &&
+          incoming().depositRwf == existing().depositRwf &&
+          incoming().dailyReturnRwf == existing().dailyReturnRwf &&
+          incoming().totalEarnedRwf > existing().totalEarnedRwf &&
+          incoming().totalEarnedRwf <= existing().dailyReturnRwf * 60 &&
+          incoming().lastRoiCreditedAt != existing().lastRoiCreditedAt &&
+          incoming().status in ['active', 'completed'] &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['totalEarnedRwf', 'lastRoiCreditedAt', 'status', 'updatedAt'])
+        )
+      );
+      allow delete: if isAdmin() && isValidId(investmentId);
+    }
+
+    match /spinHistory/{spinId} {
+      allow get: if isValidId(spinId) && (isOwner(existing().userId) || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(spinId) && isOwner(incoming().userId) && isValidSpin(incoming()) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.spinCredits >= 1;
+      allow update: if false;
+      allow delete: if isAdmin() && isValidId(spinId);
+    }
+
+    match /withdrawals/{withdrawalId} {
+      allow get: if isValidId(withdrawalId) && (isOwner(existing().userId) || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(withdrawalId) && isOwner(incoming().userId) && isValidWithdrawal(incoming()) &&
+        incoming().status == 'pending_admin' &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.kycStatus == 'approved';
+      allow update: if isAdmin() && isValidId(withdrawalId) && isValidWithdrawal(incoming());
+      allow delete: if isAdmin() && isValidId(withdrawalId);
+    }
+
+    match /videoCampaigns/{campaignId} {
+      allow get: if isValidId(campaignId) && isSignedIn() && (existing().status == 'active' || existing().creatorId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().status == 'active' || existing().creatorId == request.auth.uid || isAdmin());
+      allow create: if isValidId(campaignId) && isSignedIn() && isValidVideo(incoming()) && (
+        (isAdmin() && incoming().creatorId == 'admin' && incoming().status == 'active') ||
+        (incoming().creatorId == request.auth.uid && incoming().status == 'pending_admin' && incoming().watchedByUserIds.size() == 0)
+      );
+      allow update: if isValidId(campaignId) && isSignedIn() && isValidVideo(incoming()) && (
+        isAdmin() || (
+          existing().status == 'active' &&
+          !(request.auth.uid in existing().watchedByUserIds) &&
+          incoming().watchedByUserIds.size() == existing().watchedByUserIds.size() + 1 &&
+          request.auth.uid in incoming().watchedByUserIds &&
+          incoming().rewardPerViewRwf == existing().rewardPerViewRwf &&
+          incoming().creatorId == existing().creatorId &&
+          incoming().status in ['active', 'completed'] &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['watchedByUserIds', 'status', 'updatedAt'])
+        )
+      );
+      allow delete: if isAdmin() && isValidId(campaignId);
+    }
+
+    match /customTasks/{taskId} {
+      allow get: if isValidId(taskId) && isSignedIn() && (existing().status == 'active' || existing().creatorId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().status == 'active' || existing().creatorId == request.auth.uid || isAdmin());
+      allow create: if isValidId(taskId) && isSignedIn() && isValidTask(incoming()) && (
+        (isAdmin() && incoming().creatorId == 'admin' && incoming().status == 'active') ||
+        (incoming().creatorId == request.auth.uid && incoming().status == 'pending_admin' && incoming().approvedWorkerIds.size() == 0)
+      );
+      allow update: if isAdmin() && isValidId(taskId) && isValidTask(incoming());
+      allow delete: if isAdmin() && isValidId(taskId);
+    }
+
+    match /taskSubmissions/{submissionId} {
+      allow get: if isValidId(submissionId) && (isOwner(existing().workerId) || isAdmin());
+      allow list: if isSignedIn() && (existing().workerId == request.auth.uid || isAdmin());
+      allow create: if isValidId(submissionId) && isOwner(incoming().workerId) && isValidSubmission(incoming()) &&
+        incoming().status == 'pending_admin' &&
+        get(/databases/$(database)/documents/customTasks/$(incoming().taskId)).data.status == 'active';
+      allow update: if isAdmin() && isValidId(submissionId) && isValidSubmission(incoming());
+      allow delete: if isAdmin() && isValidId(submissionId);
+    }
+
+    match /betSessions/{betId} {
+      allow get: if isValidId(betId) && (isOwner(existing().userId) || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(betId) && isOwner(incoming().userId) && isValidBetSession(incoming());
+      allow update: if false;
+      allow delete: if isAdmin() && isValidId(betId);
+    }
+
+    match /airtimeRequests/{requestId} {
+      allow get: if isValidId(requestId) && (isOwner(existing().userId) || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(requestId) && isOwner(incoming().userId) && isValidAirtime(incoming()) &&
+        incoming().status == 'pending_admin';
+      allow update: if isAdmin() && isValidId(requestId) && isValidAirtime(incoming());
+      allow delete: if isAdmin() && isValidId(requestId);
+    }
+
+    match /p2pTransfers/{transferId} {
+      allow get: if isValidId(transferId) && (isOwner(existing().senderId) || isOwner(existing().receiverId) || isAdmin());
+      allow list: if isSignedIn() && (existing().senderId == request.auth.uid || existing().receiverId == request.auth.uid || isAdmin());
+      allow create: if isValidId(transferId) && isOwner(incoming().senderId) && isValidP2P(incoming()) &&
+        incoming().claimedByReceiver == false;
+      allow update: if isValidId(transferId) && isValidP2P(incoming()) && (
+        isAdmin() || (
+          isOwner(existing().receiverId) &&
+          existing().claimedByReceiver == false &&
+          incoming().claimedByReceiver == true &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['claimedByReceiver'])
+        )
+      );
+      allow delete: if isAdmin() && isValidId(transferId);
+    }
+
+    match /fxExchanges/{exchangeId} {
+      allow get: if isValidId(exchangeId) && (isOwner(existing().userId) || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(exchangeId) && isOwner(incoming().userId) && isValidFx(incoming());
+      allow update: if false;
+      allow delete: if isAdmin() && isValidId(exchangeId);
+    }
+
+    match /usdtRequests/{requestId} {
+      allow get: if isValidId(requestId) && (isOwner(existing().userId) || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(requestId) && isOwner(incoming().userId) && isValidUsdtRequest(incoming()) &&
+        incoming().status == 'pending_admin';
+      allow update: if isAdmin() && isValidId(requestId) && isValidUsdtRequest(incoming());
+      allow delete: if isAdmin() && isValidId(requestId);
+    }
+
+    match /transactions/{transactionId} {
+      allow get: if isValidId(transactionId) && (isOwner(existing().userId) || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(transactionId) && isValidTransaction(incoming()) && (isOwner(incoming().userId) || isAdmin());
+      allow update: if isAdmin() && isValidId(transactionId) && isValidTransaction(incoming());
+      allow delete: if isAdmin() && isValidId(transactionId);
+    }
+
+    match /notifications/{notificationId} {
+      allow get: if isValidId(notificationId) && (isOwner(existing().recipientId) || isAdmin());
+      allow list: if isSignedIn() && (existing().recipientId == request.auth.uid || isAdmin());
+      allow create: if isValidId(notificationId) && isSignedIn() && isValidNotification(incoming()) && (
+        isAdmin() || incoming().recipientId == request.auth.uid || incoming().recipientId == 'admin'
+      );
+      allow update: if isValidId(notificationId) && isValidNotification(incoming()) && (
+        isAdmin() || (
+          isOwner(existing().recipientId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['read'])
+        )
+      );
+      allow delete: if isAdmin() && isValidId(notificationId);
+    }
+  }
+}

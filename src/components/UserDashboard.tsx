@@ -36,6 +36,7 @@ import {
   InvestmentPlanTier,
   LoanRequest,
   P2PTransfer,
+  PlatformNotification,
   RegisteredUser,
   RwandaKycData,
   SavingsGoal,
@@ -59,6 +60,7 @@ import {
   formatUsdt,
 } from '../utils/formatters';
 import { ColorChangingClock } from './ColorChangingClock';
+import { NotificationsBell } from './NotificationsBell';
 import { StatusLabel } from './StatusLabel';
 import { InvestmentPlansView } from './user/InvestmentPlansView';
 import { LuckySpinWheel } from './user/LuckySpinWheel';
@@ -172,6 +174,8 @@ interface UserDashboardProps {
     targetCompletions: number;
     paymentRef: string;
   }) => void;
+  notifications?: PlatformNotification[];
+  onMarkNotificationRead?: (id: string) => void;
   onSignOut: () => void;
 }
 
@@ -620,6 +624,12 @@ export function UserDashboard(props: UserDashboardProps) {
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
+            {props.notifications && props.onMarkNotificationRead && (
+              <NotificationsBell
+                notifications={props.notifications}
+                onMarkRead={props.onMarkNotificationRead}
+              />
+            )}
             <ColorChangingClock />
           </div>
         </header>

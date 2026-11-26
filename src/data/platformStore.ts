@@ -73,6 +73,7 @@ export const INITIAL_PLATFORM_STATE: PlatformStoreState = {
       createdAt: '2026-11-10T10:00:00Z',
     },
   ],
+  notifications: [],
   settings: DEFAULT_SYSTEM_SETTINGS,
   session: { type: 'guest' },
 };

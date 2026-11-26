@@ -75,6 +75,7 @@ export interface RegisteredUser {
   checkInStreak: number;
   kycStatus: KycStatus;
   kycData?: RwandaKycData;
+  lastTxId?: string;
   createdAt: string;
 }
 
@@ -329,6 +330,16 @@ export interface AdminPromotion {
   createdAt: string;
 }
 
+export interface PlatformNotification {
+  id: string;
+  recipientId: string;
+  title: string;
+  message: string;
+  category: string;
+  read: boolean;
+  createdAt: string;
+}
+
 export interface SystemSettings {
   activationFeeRwf: number;
   welcomeBonusRwf: number;
@@ -396,6 +407,7 @@ export interface PlatformStoreState {
   usdtRequests: UsdtRequest[];
   transactions: TransactionRecord[];
   promotions: AdminPromotion[];
+  notifications: PlatformNotification[];
   settings: SystemSettings;
   session: SessionRole;
 }

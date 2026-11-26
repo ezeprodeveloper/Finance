@@ -9,6 +9,7 @@ interface LoginModalProps {
     password: string,
   ) => Promise<{ error: string | null; needsAdminSetup?: boolean }>;
   onClaimAdminPassword: (email: string, password: string) => Promise<string | null>;
+  onGoogleSignIn?: () => Promise<string | null>;
   onSwitchToRegister: () => void;
 }
 
@@ -17,6 +18,7 @@ export function LoginModal({
   onClose,
   onAuthenticate,
   onClaimAdminPassword,
+  onGoogleSignIn,
   onSwitchToRegister,
 }: LoginModalProps) {
   const [identifier, setIdentifier] = useState('');
@@ -43,8 +45,8 @@ export function LoginModal({
 
     try {
       if (adminSetupMode) {
-        if (password.length < 6) {
-          setError('Choose a password with at least 6 characters.');
+        if (password.length < 8) {
+          setError('Choose a password with at least 8 characters.');
           return;
         }
         if (password !== confirmAdminPass) {
@@ -82,6 +84,20 @@ export function LoginModal({
     }
   };
 
+  const handleGoogleClick = async () => {
+    if (!onGoogleSignIn) return;
+    setError(null);
+    setLoading(true);
+    try {
+      const err = await onGoogleSignIn();
+      if (err) {
+        setError(err);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4"
@@ -106,11 +122,11 @@ export function LoginModal({
         <div className="mb-6">
           <p className="text-xs font-semibold text-blue-800">E-Finance Rwanda</p>
           <h2 id="login-modal-title" className="font-display text-2xl font-bold text-[#071B38] mt-1">
-            {adminSetupMode ? 'First-Run Admin Security Setup' : 'Sign in to your account'}
+            {adminSetupMode ? 'First-Run Admin Account Setup' : 'Sign in to your account'}
           </h2>
           <p className="text-xs text-slate-600 mt-1">
             {adminSetupMode
-              ? 'Set and lock your server-side administrator password for this deployment.'
+              ? 'Create your Firebase administrator account or sign in with Google below.'
               : 'Enter your registered email or phone number and password to access your E-Finance workspace.'}
           </p>
         </div>
@@ -128,7 +144,7 @@ export function LoginModal({
                 setIdentifier(e.target.value);
                 if (adminSetupMode) setAdminSetupMode(false);
               }}
-              placeholder="name@example.com"
+              placeholder="name@example.com or 0788..."
               required
               readOnly={adminSetupMode}
               className="w-full h-11 px-3.5 text-sm bg-white border border-slate-300 rounded-lg text-slate-900"
@@ -168,7 +184,7 @@ export function LoginModal({
           )}
 
           {error && (
-            <p className="text-xs font-medium text-red-800 bg-red-50 border border-red-200 rounded-lg px-3.5 py-2.5">
+            <p className="text-xs font-medium text-red-800 bg-red-50 border border-red-200 rounded-lg px-3.5 py-2.5 leading-relaxed">
               {error}
             </p>
           )}
@@ -183,12 +199,32 @@ export function LoginModal({
               {loading
                 ? 'Verifying...'
                 : adminSetupMode
-                  ? 'Save Password & Enter Workspace'
+                  ? 'Create Admin Account'
                   : 'Sign In'}
             </span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
+
+        {onGoogleSignIn && (
+          <div className="mt-4">
+            <div className="relative flex py-2 items-center">
+              <div className="flex-grow border-t border-slate-200" />
+              <span className="shrink mx-3 text-[11px] uppercase tracking-wider text-slate-400">
+                or
+              </span>
+              <div className="flex-grow border-t border-slate-200" />
+            </div>
+            <button
+              type="button"
+              disabled={loading}
+              onClick={handleGoogleClick}
+              className="w-full h-11 px-4 border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-slate-800 text-xs font-semibold rounded-lg inline-flex items-center justify-center gap-2 transition-colors"
+            >
+              <span>Continue with Google</span>
+            </button>
+          </div>
+        )}
 
         <div className="mt-5 pt-4 border-t border-slate-200 flex items-center justify-between text-xs">
           <span className="text-slate-600">New to E-Finance Rwanda?</span>
