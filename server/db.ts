@@ -39,12 +39,15 @@ const POSTGRES_ENV_KEYS = [
   'POSTGRES_PRISMA_URL',
   'POSTGRES_URL_NON_POOLING',
   'DATABASE_URL',
+  'POSTGRESQL_URL',
   'PRISMA_DATABASE_URL',
   'STORAGE_POSTGRES_URL',
   'STORAGE_URL',
   'NEON_DATABASE_URL',
   'SUPABASE_DB_URL',
   'NETLIFY_DATABASE_URL',
+  'PG_CONNECTION_STRING',
+  'PG_URL',
 ] as const;
 
 export function isServerlessProductionHost(): boolean {
@@ -56,9 +59,19 @@ export function isServerlessProductionHost(): boolean {
   );
 }
 
+function sanitizeConnectionString(raw: string): string {
+  let cleaned = raw.trim();
+  if (cleaned.toLowerCase().startsWith('psql ')) {
+    cleaned = cleaned.slice(5).trim();
+  }
+  return cleaned.replace(/^['"]+|['"]+$/g, '').trim();
+}
+
 export function getPostgresConnectionString(): string | null {
   for (const key of POSTGRES_ENV_KEYS) {
-    const val = process.env[key]?.trim();
+    const raw = process.env[key];
+    if (!raw) continue;
+    const val = sanitizeConnectionString(raw);
     if (val && (val.startsWith('postgres://') || val.startsWith('postgresql://'))) {
       return val;
     }
@@ -72,32 +85,97 @@ export function getSqlEngine(): SqlEngine {
   }
   if (isServerlessProductionHost()) {
     throw new DatabaseConfigurationError(
-      'Persistent PostgreSQL is not yet connected to this serverless deployment. Connect a Vercel Storage Postgres integration (Neon, Supabase, or Prisma Postgres) and redeploy — schema, indexes, migrations, and default settings will initialize automatically.',
+      'Persistent PostgreSQL is not yet connected to this serverless deployment. Add DATABASE_URL or POSTGRES_URL (or connect a Vercel Storage Postgres integration) and redeploy — schema, indexes, migrations, and default settings will initialize automatically.',
     );
   }
   return 'sqlite';
 }
 
+function normalizePgUrlForPool(connStr: string): { url: string; useSsl: boolean } {
+  try {
+    const parsed = new URL(connStr);
+    const host = parsed.hostname.toLowerCase();
+    const sslmode = parsed.searchParams.get('sslmode')?.toLowerCase();
+    const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+    const useSsl = sslmode !== 'disable' && !isLocal;
+
+    if (
+      useSsl &&
+      (sslmode === 'require' || sslmode === 'prefer' || sslmode === 'verify-ca') &&
+      !parsed.searchParams.has('uselibpqcompat')
+    ) {
+      parsed.searchParams.set('uselibpqcompat', 'true');
+    }
+    return { url: parsed.toString(), useSsl };
+  } catch {
+    const isLocal = connStr.includes('localhost') || connStr.includes('127.0.0.1');
+    return { url: connStr, useSsl: !isLocal && !connStr.includes('sslmode=disable') };
+  }
+}
+
+function resetPgPool(): void {
+  const existing = globalThis._efinancePgPool;
+  globalThis._efinancePgPool = undefined;
+  if (existing) {
+    void existing.end().catch(() => {});
+  }
+}
+
 function getPgPool(): Pool {
   if (!globalThis._efinancePgPool) {
-    const connStr = getPostgresConnectionString();
-    if (!connStr) {
+    const rawConn = getPostgresConnectionString();
+    if (!rawConn) {
       throw new DatabaseConfigurationError(
         'PostgreSQL connection URL is not configured.',
       );
     }
-    const useSsl = !connStr.includes('localhost') && !connStr.includes('127.0.0.1');
-    globalThis._efinancePgPool = new Pool({
-      connectionString: connStr,
-      max: 10,
+    const { url, useSsl } = normalizePgUrlForPool(rawConn);
+    const isServerless = isServerlessProductionHost();
+    const pool = new Pool({
+      connectionString: url,
+      max: isServerless ? 5 : 10,
+      idleTimeoutMillis: isServerless ? 10000 : 30000,
       connectionTimeoutMillis: 15000,
+      allowExitOnIdle: isServerless,
       ssl: useSsl ? { rejectUnauthorized: false } : false,
     });
-    globalThis._efinancePgPool.on('error', (err) => {
+    pool.on('error', (err) => {
       console.error('Unexpected PostgreSQL pool error:', err);
+      if (globalThis._efinancePgPool === pool) {
+        globalThis._efinancePgPool = undefined;
+      }
     });
+    globalThis._efinancePgPool = pool;
   }
   return globalThis._efinancePgPool;
+}
+
+function isTransientPgConnectionError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const code = String((err as { code?: unknown }).code ?? '');
+  const msg = String((err as { message?: unknown }).message ?? '');
+  return (
+    code === 'ECONNRESET' ||
+    code === 'ETIMEDOUT' ||
+    code === 'EPIPE' ||
+    code === '57P01' ||
+    code === '57P02' ||
+    code === '57P03' ||
+    msg.includes('Connection terminated unexpectedly') ||
+    msg.includes('Client has encountered a connection error')
+  );
+}
+
+async function runPgQuery<T>(fn: (pool: Pool) => Promise<T>): Promise<T> {
+  try {
+    return await fn(getPgPool());
+  } catch (err) {
+    if (isTransientPgConnectionError(err)) {
+      resetPgPool();
+      return await fn(getPgPool());
+    }
+    throw err;
+  }
 }
 
 function getSqliteDb(): SqliteDatabase {
@@ -137,8 +215,8 @@ export async function dbQuery<T = Record<string, unknown>>(
   params: unknown[] = [],
 ): Promise<T[]> {
   if (getSqlEngine() === 'postgres') {
-    const pool = getPgPool();
-    const res = await pool.query(sql, params.map((p) => (p === undefined ? null : p)));
+    const normalizedParams = params.map((p) => (p === undefined ? null : p));
+    const res = await runPgQuery((pool) => pool.query(sql, normalizedParams));
     return res.rows as T[];
   }
   const sqlite = getSqliteDb();
@@ -162,8 +240,8 @@ export async function dbQueryOne<T = Record<string, unknown>>(
 
 export async function dbExecute(sql: string, params: unknown[] = []): Promise<void> {
   if (getSqlEngine() === 'postgres') {
-    const pool = getPgPool();
-    await pool.query(sql, params.map((p) => (p === undefined ? null : p)));
+    const normalizedParams = params.map((p) => (p === undefined ? null : p));
+    await runPgQuery((pool) => pool.query(sql, normalizedParams));
     return;
   }
   const sqlite = getSqliteDb();

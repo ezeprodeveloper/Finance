@@ -678,26 +678,34 @@ export default function App() {
   /* Render Router                                                            */
   /* ------------------------------------------------------------------------ */
   const renderMainContent = () => {
-    if (setupStatus && !setupStatus.dbReady && setupStatus.needsVercelPostgresStore) {
+    if (setupStatus && !setupStatus.dbReady) {
       return (
         <div className="min-h-screen bg-shifting-aurora text-white flex items-center justify-center p-6">
           <div className="max-w-lg w-full bg-white text-slate-900 rounded-2xl p-8 space-y-5 shadow-2xl">
             <div className="space-y-2">
               <p className="text-xs font-semibold uppercase tracking-wider text-[#071B38]">
-                Vercel Persistent Database Setup
+                {setupStatus.needsVercelPostgresStore
+                  ? 'Vercel Persistent Database Setup'
+                  : 'Database Connection Recovery'}
               </p>
               <h1 className="font-display text-2xl font-bold text-[#071B38]">
-                Connect a Postgres Store to Continue
+                {setupStatus.needsVercelPostgresStore
+                  ? 'Connect a Postgres Store to Continue'
+                  : 'Unable to Reach PostgreSQL Database'}
               </h1>
               <p className="text-sm text-slate-600 leading-relaxed">
-                E-Finance initializes all tables, indexes, migrations, and default settings automatically — no manual SQL or record insertion is required. On Vercel, attaching a persistent PostgreSQL store requires your one-click authorization:
+                {setupStatus.needsVercelPostgresStore
+                  ? 'E-Finance initializes all tables, indexes, migrations, and default settings automatically — no manual SQL or record insertion is required. Connect your PostgreSQL database to proceed:'
+                  : 'A PostgreSQL URL is configured, but the server could not complete the connection check. Verify your DATABASE_URL / POSTGRES_URL environment variable and retry:'}
               </p>
             </div>
-            <ol className="text-sm text-slate-700 space-y-2 list-decimal pl-5">
-              <li>Open your project in the Vercel Dashboard and go to the <strong>Storage</strong> tab.</li>
-              <li>Click <strong>Create Database / Marketplace</strong> and connect a Postgres provider (Neon, Supabase, or Prisma Postgres).</li>
-              <li>Trigger a <strong>Redeploy</strong> so Vercel injects <code className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">POSTGRES_URL</code> / <code className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">DATABASE_URL</code> automatically.</li>
-            </ol>
+            {setupStatus.needsVercelPostgresStore && (
+              <ol className="text-sm text-slate-700 space-y-2 list-decimal pl-5">
+                <li>Open your project in the Vercel Dashboard and go to the <strong>Storage</strong> tab (or <strong>Settings → Environment Variables</strong>).</li>
+                <li>Attach a Neon / Postgres store or add <code className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">DATABASE_URL</code> / <code className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">POSTGRES_URL</code>.</li>
+                <li>Trigger a <strong>Redeploy</strong> — schema, migrations, and settings initialize automatically on first request.</li>
+              </ol>
+            )}
             {setupStatus.error && (
               <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
                 {setupStatus.error}
