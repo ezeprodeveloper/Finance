@@ -9,17 +9,6 @@ function resolveBasePath(): string {
   if (explicit && explicit !== '/' && explicit.length > 0) {
     return '/' + explicit.replace(/^\/+|\/+$/g, '') + '/';
   }
-  if (process.env.GITHUB_PAGES === 'true') {
-    const ghRepo = process.env.GITHUB_REPOSITORY;
-    if (ghRepo && ghRepo.includes('/')) {
-      const [owner, repo] = ghRepo.split('/');
-      if (repo.toLowerCase() === `${owner.toLowerCase()}.github.io`) {
-        return '/';
-      }
-      return `/${repo}/`;
-    }
-    return './';
-  }
   return '/';
 }
 
