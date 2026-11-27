@@ -2,14 +2,19 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Banknote,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
   Coins,
   Eye,
   History,
   LayoutDashboard,
+  Loader2,
   LogOut,
   Megaphone,
   Menu,
   PlusCircle,
+  RefreshCw,
   Search,
   Settings,
   ShieldCheck,
@@ -19,6 +24,8 @@ import {
   Video,
   X,
 } from 'lucide-react';
+import type { AdminMergedAuthEntry, AdminUsersDirectoryMeta } from '../contexts/AuthContext';
+import { MAX_LOCAL_VIDEO_FILE_BYTES } from '../services/storageService';
 import {
   AdminPortalSection,
   AdminPromotion,
@@ -39,6 +46,7 @@ import {
   WithdrawalRequest,
 } from '../types/finance';
 import {
+  formatBytes,
   formatDateTime,
   formatRwf,
   formatUsdt,
@@ -46,10 +54,12 @@ import {
 } from '../utils/formatters';
 import { ColorChangingClock } from './ColorChangingClock';
 import { NotificationsBell } from './NotificationsBell';
+import { SmartVideoPlayer } from './SmartVideoPlayer';
 import { StatusLabel } from './StatusLabel';
 
 interface AdminDashboardProps {
   users: RegisteredUser[];
+  adminUsersMeta?: AdminUsersDirectoryMeta;
   loans: LoanRequest[];
   investments: UserInvestment[];
   withdrawals: WithdrawalRequest[];
@@ -76,15 +86,22 @@ interface AdminDashboardProps {
     title: string;
     description: string;
     videoUrl: string;
+    videoFile?: File | null;
+    requiredWatchSeconds?: number;
     rewardPerViewRwf: number;
     targetViewers: number;
-  }) => void;
+    onUploadProgress?: (percent: number, stage: string) => void;
+  }) => Promise<string | null> | void;
   onAdminCreateCustomTask: (payload: {
     title: string;
     requirements: string;
+    videoUrl?: string;
+    videoFile?: File | null;
+    requiredWatchSeconds?: number;
     rewardPerCompletionRwf: number;
     targetCompletions: number;
-  }) => void;
+    onUploadProgress?: (percent: number, stage: string) => void;
+  }) => Promise<string | null> | void;
   onReviewTaskSubmission: (submissionId: string, decision: 'approved' | 'rejected', note?: string) => void;
   onReviewLoan: (loanId: string, decision: 'approved' | 'rejected') => void;
   onReviewInvestment: (investmentId: string, decision: 'active' | 'rejected') => void;
@@ -95,6 +112,7 @@ interface AdminDashboardProps {
   onTogglePromotion: (promoId: string) => void;
   onDeletePromotion: (promoId: string) => void;
   onUpdateSettings: (next: SystemSettings) => void;
+  onRefreshUsers?: () => Promise<{ count: number; error: string | null }>;
   notifications?: PlatformNotification[];
   onMarkNotificationRead?: (id: string) => void;
   onSignOut: () => void;
@@ -134,19 +152,39 @@ export function AdminDashboard(props: AdminDashboardProps) {
   // KYC note
   const [kycNotes, setKycNotes] = useState<Record<string, string>>({});
 
+  // Users directory search, filter & pagination
+  const [userSearch, setUserSearch] = useState('');
+  const [userStatusFilter, setUserStatusFilter] = useState<string>('all');
+  const [usersPage, setUsersPage] = useState(1);
+  const [usersPageSize, setUsersPageSize] = useState(25);
+  const [refreshingUsers, setRefreshingUsers] = useState(false);
+  const [refreshUsersNotice, setRefreshUsersNotice] = useState<string | null>(null);
+
   // Admin direct add Video & Task state
   const [vidTitle, setVidTitle] = useState('');
   const [vidDesc, setVidDesc] = useState('');
   const [vidUrl, setVidUrl] = useState('');
-  const [vidFileName, setVidFileName] = useState('');
+  const [vidFile, setVidFile] = useState<File | null>(null);
+  const [vidPreviewUrl, setVidPreviewUrl] = useState<string | null>(null);
+  const [vidRequiredSec, setVidRequiredSec] = useState('15');
   const [vidReward, setVidReward] = useState(String(props.settings.minVideoRewardRwf || 50));
   const [vidTarget, setVidTarget] = useState('50');
+  const [vidUploading, setVidUploading] = useState(false);
+  const [vidProgress, setVidProgress] = useState<{ percent: number; stage: string } | null>(null);
+  const [vidError, setVidError] = useState<string | null>(null);
   const [vidNotice, setVidNotice] = useState<string | null>(null);
 
   const [tskTitle, setTskTitle] = useState('');
   const [tskReqs, setTskReqs] = useState('');
+  const [tskVideoUrl, setTskVideoUrl] = useState('');
+  const [tskVideoFile, setTskVideoFile] = useState<File | null>(null);
+  const [tskPreviewUrl, setTskPreviewUrl] = useState<string | null>(null);
+  const [tskRequiredSec, setTskRequiredSec] = useState('15');
   const [tskReward, setTskReward] = useState('100');
   const [tskTarget, setTskTarget] = useState('50');
+  const [tskUploading, setTskUploading] = useState(false);
+  const [tskProgress, setTskProgress] = useState<{ percent: number; stage: string } | null>(null);
+  const [tskError, setTskError] = useState<string | null>(null);
   const [tskNotice, setTskNotice] = useState<string | null>(null);
 
   // Audit search/filter
@@ -165,6 +203,113 @@ export function AdminDashboard(props: AdminDashboardProps) {
   useEffect(() => {
     setSettingsDraft(props.settings);
   }, [props.settings]);
+
+  useEffect(() => {
+    return () => {
+      if (vidPreviewUrl) URL.revokeObjectURL(vidPreviewUrl);
+    };
+  }, [vidPreviewUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (tskPreviewUrl) URL.revokeObjectURL(tskPreviewUrl);
+    };
+  }, [tskPreviewUrl]);
+
+  type DirectoryRow =
+    | {
+        kind: 'firestore';
+        uid: string;
+        user: RegisteredUser;
+        authMeta?: AdminMergedAuthEntry;
+      }
+    | {
+        kind: 'auth_only';
+        uid: string;
+        authMeta: AdminMergedAuthEntry;
+      };
+
+  const combinedDirectoryUsers = useMemo<DirectoryRow[]>(() => {
+    const authEntries = props.adminUsersMeta?.authUsers ?? [];
+    const authByUid = new Map<string, AdminMergedAuthEntry>();
+    for (const entry of authEntries) {
+      authByUid.set(entry.uid, entry);
+    }
+
+    const rows: DirectoryRow[] = [];
+    const seenUids = new Set<string>();
+
+    for (const u of props.users) {
+      seenUids.add(u.id);
+      rows.push({
+        kind: 'firestore',
+        uid: u.id,
+        user: u,
+        authMeta: authByUid.get(u.id),
+      });
+    }
+
+    for (const entry of authEntries) {
+      if (seenUids.has(entry.uid)) continue;
+      seenUids.add(entry.uid);
+      if (entry.profile) {
+        rows.push({
+          kind: 'firestore',
+          uid: entry.uid,
+          user: entry.profile,
+          authMeta: entry,
+        });
+      } else {
+        rows.push({
+          kind: 'auth_only',
+          uid: entry.uid,
+          authMeta: entry,
+        });
+      }
+    }
+
+    return rows;
+  }, [props.users, props.adminUsersMeta]);
+
+  const filteredDirectoryUsers = useMemo(() => {
+    const q = userSearch.trim().toLowerCase();
+    return combinedDirectoryUsers.filter((row) => {
+      if (row.kind === 'auth_only') {
+        if (userStatusFilter !== 'all' && userStatusFilter !== 'auth_only') return false;
+        if (!q) return true;
+        return (
+          row.uid.toLowerCase().includes(q) ||
+          row.authMeta.email.toLowerCase().includes(q) ||
+          row.authMeta.displayName.toLowerCase().includes(q) ||
+          row.authMeta.phone.toLowerCase().includes(q)
+        );
+      }
+
+      const u = row.user;
+      if (userStatusFilter === 'auth_only') return false;
+      if (userStatusFilter !== 'all' && u.accountStatus !== userStatusFilter) return false;
+      if (!q) return true;
+      return (
+        u.id.toLowerCase().includes(q) ||
+        `${u.firstName} ${u.secondName}`.toLowerCase().includes(q) ||
+        u.email.toLowerCase().includes(q) ||
+        u.phone.toLowerCase().includes(q) ||
+        u.accountNumber.toLowerCase().includes(q) ||
+        u.idNumber.toLowerCase().includes(q)
+      );
+    });
+  }, [combinedDirectoryUsers, userSearch, userStatusFilter]);
+
+  useEffect(() => {
+    setUsersPage(1);
+  }, [userSearch, userStatusFilter, usersPageSize]);
+
+  const totalUserPages = Math.max(1, Math.ceil(filteredDirectoryUsers.length / usersPageSize));
+  const safeUserPage = Math.min(usersPage, totalUserPages);
+  const paginatedDirectoryUsers = useMemo(() => {
+    const start = (safeUserPage - 1) * usersPageSize;
+    return filteredDirectoryUsers.slice(start, start + usersPageSize);
+  }, [filteredDirectoryUsers, safeUserPage, usersPageSize]);
 
   const pendingRegistrations = props.users.filter((u) => u.accountStatus === 'pending_approval').length;
   const pendingActivations = props.users.filter(
@@ -353,7 +498,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
                 <div className="p-5">
                   <p className="text-xs text-slate-500">Registered Users</p>
                   <p className="font-mono text-2xl font-semibold text-[#071B38] mt-1 tabular-nums">
-                    {props.users.length}
+                    {combinedDirectoryUsers.length}
                   </p>
                   <p className="text-xs text-amber-700 mt-1">{pendingRegistrations} awaiting approval</p>
                 </div>
@@ -465,138 +610,330 @@ export function AdminDashboard(props: AdminDashboardProps) {
           {/* 2. Users & Photos Management */}
           {section === 'users' && (
             <div className="bg-white/95 border border-slate-200 rounded-xl overflow-hidden">
-              <div className="px-6 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+              <div className="px-6 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-base font-semibold text-slate-900">All registered users &amp; photos</h2>
+                  <h2 className="text-base font-semibold text-slate-900">
+                    All registered users (Firebase Auth &amp; Firestore Directory)
+                  </h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Admin can view all 3-step details, approve registrations, confirm 200 RWF payments, and edit any user info or photo.
+                    Full user directory ({combinedDirectoryUsers.length} total · {props.users.length} Firestore profiles
+                    {props.adminUsersMeta?.authLookupAvailable
+                      ? ` · ${props.adminUsersMeta.totalAuthUsers} Firebase Auth accounts`
+                      : ''}
+                    )
                   </p>
                 </div>
-                <span className="font-mono text-xs text-slate-500">{props.users.length} total users</span>
+                <div className="flex flex-wrap items-center gap-2">
+                  {props.onRefreshUsers && (
+                    <button
+                      type="button"
+                      disabled={refreshingUsers}
+                      onClick={async () => {
+                        if (!props.onRefreshUsers) return;
+                        setRefreshingUsers(true);
+                        setRefreshUsersNotice(null);
+                        try {
+                          const res = await props.onRefreshUsers();
+                          if (res.error) {
+                            setRefreshUsersNotice(`Refresh error: ${res.error}`);
+                          } else {
+                            setRefreshUsersNotice(`Synced ${res.count} user records from Firebase.`);
+                          }
+                        } finally {
+                          setRefreshingUsers(false);
+                        }
+                      }}
+                      className="h-9 px-3 bg-[#071B38] hover:bg-[#0c2954] disabled:opacity-60 text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5"
+                    >
+                      {refreshingUsers ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-3.5 h-3.5" />
+                      )}
+                      <span>{refreshingUsers ? 'Syncing…' : 'Refresh All Users'}</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
-              {props.users.length === 0 ? (
+              {refreshUsersNotice && (
+                <div className="px-6 py-2.5 bg-emerald-50 border-b border-emerald-200 text-xs font-medium text-emerald-800">
+                  {refreshUsersNotice}
+                </div>
+              )}
+
+              {props.adminUsersMeta?.authLookupAvailable === false && (
+                <div className="px-6 py-2.5 bg-amber-50 border-b border-amber-200 text-[11px] text-amber-900">
+                  Displaying all {props.users.length} Firestore user profiles. Firebase Auth-only account listing (accounts without a Firestore profile yet) requires Admin SDK IAM read access on project <span className="font-mono">e-finance-2026</span>.
+                </div>
+              )}
+
+              {/* Search, Filter & Page Size Controls */}
+              <div className="px-6 py-3.5 border-b border-slate-200 bg-slate-50/70 flex flex-wrap items-center justify-between gap-3">
+                <div className="relative flex-1 min-w-[220px] max-w-md">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="search"
+                    value={userSearch}
+                    onChange={(e) => setUserSearch(e.target.value)}
+                    placeholder="Search name, email, phone, UID, National ID, or account..."
+                    className="w-full h-9 pl-8 pr-3 text-xs bg-white border border-slate-300 rounded-lg"
+                  />
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={userStatusFilter}
+                    onChange={(e) => setUserStatusFilter(e.target.value)}
+                    className="h-9 px-2.5 text-xs bg-white border border-slate-300 rounded-lg"
+                  >
+                    <option value="all">All Statuses ({combinedDirectoryUsers.length})</option>
+                    <option value="pending_approval">Pending Approval</option>
+                    <option value="awaiting_payment">Awaiting Activation Payment</option>
+                    <option value="payment_submitted">Payment Submitted</option>
+                    <option value="active">Active</option>
+                    <option value="suspended">Suspended</option>
+                    <option value="auth_only">Firebase Auth Only (Missing Profile)</option>
+                  </select>
+                  <select
+                    value={usersPageSize}
+                    onChange={(e) => setUsersPageSize(Number(e.target.value) || 25)}
+                    className="h-9 px-2.5 text-xs bg-white border border-slate-300 rounded-lg font-mono"
+                    aria-label="Users per page"
+                  >
+                    <option value={10}>10 / page</option>
+                    <option value={25}>25 / page</option>
+                    <option value={50}>50 / page</option>
+                    <option value={100}>100 / page</option>
+                  </select>
+                </div>
+              </div>
+
+              {filteredDirectoryUsers.length === 0 ? (
                 <div className="p-10 text-center text-sm text-slate-500">
-                  No users have registered yet. New registrations appear here immediately.
+                  {combinedDirectoryUsers.length === 0
+                    ? 'No users have registered yet. New registrations appear here immediately.'
+                    : 'No users match the current search or filter.'}
                 </div>
               ) : (
-                <div className="divide-y divide-slate-200">
-                  {props.users.map((u) => (
-                    <div key={u.id} className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                      <div className="flex items-start gap-4">
-                        {u.photoDataUrl ? (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setPreviewPhoto({
-                                url: u.photoDataUrl,
-                                caption: `${u.firstName} ${u.secondName} — Registration Photo`,
-                              })
-                            }
-                            className="group relative shrink-0"
-                            title="View full photo"
+                <>
+                  <div className="divide-y divide-slate-200">
+                    {paginatedDirectoryUsers.map((row) => {
+                      if (row.kind === 'auth_only') {
+                        const a = row.authMeta;
+                        return (
+                          <div
+                            key={row.uid}
+                            className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-slate-50/40"
                           >
-                            <img
-                              src={u.photoDataUrl}
-                              alt={`${u.firstName} ${u.secondName}`}
-                              className="w-16 h-16 rounded-xl object-cover border border-slate-300 group-hover:opacity-90"
-                            />
-                            <span className="absolute bottom-1 right-1 bg-slate-900/75 text-white p-0.5 rounded">
-                              <Eye className="w-3 h-3" />
-                            </span>
-                          </button>
-                        ) : (
-                          <div className="w-16 h-16 rounded-xl bg-slate-100 border border-slate-200 shrink-0" />
-                        )}
-                        <div className="space-y-1 text-xs">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="text-sm font-bold text-[#071B38]">
-                              {u.firstName} {u.secondName}
-                            </h3>
-                            <span className="font-mono text-slate-500">{u.accountNumber}</span>
-                            <StatusLabel
-                              label={u.accountStatus.replace('_', ' ')}
-                              tone={
-                                u.accountStatus === 'active'
-                                  ? 'success'
-                                  : u.accountStatus === 'suspended'
-                                    ? 'danger'
-                                    : 'warning'
-                              }
-                            />
+                            <div className="flex items-start gap-4">
+                              <div className="w-16 h-16 rounded-xl bg-slate-200 border border-slate-300 shrink-0 flex items-center justify-center text-slate-500 text-xs font-mono">
+                                AUTH
+                              </div>
+                              <div className="space-y-1 text-xs">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <h3 className="text-sm font-bold text-[#071B38]">
+                                    {a.displayName || a.email || a.uid}
+                                  </h3>
+                                  <StatusLabel label="Auth Only (No Profile)" tone="warning" />
+                                  {a.disabled && <StatusLabel label="Disabled in Auth" tone="danger" />}
+                                  <StatusLabel
+                                    label={a.emailVerified ? 'Email Verified' : 'Unverified Email'}
+                                    tone={a.emailVerified ? 'success' : 'neutral'}
+                                  />
+                                </div>
+                                <p className="text-slate-600 font-mono">
+                                  UID: {a.uid} · {a.email || 'No email'} {a.phone ? `· ${a.phone}` : ''}
+                                </p>
+                                <p className="text-slate-500 text-[11px] font-mono">
+                                  Created: {a.authCreatedAt ? formatDateTime(a.authCreatedAt) : '—'} · Last Sign-In:{' '}
+                                  {a.lastSignInAt ? formatDateTime(a.lastSignInAt) : '—'}
+                                </p>
+                              </div>
+                            </div>
                           </div>
-                          <p className="text-slate-600">
-                            {u.email} · <span className="font-mono">{u.phone}</span> · ID: <span className="font-mono">{u.idNumber}</span> · {u.gender} ({u.dateOfBirth})
-                          </p>
-                          <p className="text-slate-600">
-                            <strong>{u.education.type}:</strong> {u.education.institutionName} ({u.education.levelOrClass}, {u.education.facultyOrCombination})
-                          </p>
-                          <p className="text-slate-600">
-                            <strong>Birth:</strong> {u.residence.placeOfBirth}
-                            {u.residence.province ? ` · ${u.residence.province}` : ''}
-                            {u.residence.akarere ? ` · Residence: ${u.residence.akarere} / ${u.residence.umurenge ?? '-'} / ${u.residence.akagari ?? '-'} / ${u.residence.umudugudu ?? '-'}` : ''}
-                          </p>
-                          {u.activationPaymentRef && (
-                            <p className="font-mono text-blue-800">
-                              Activation MoMo Ref: {u.activationPaymentRef} ({u.activationPaidPhone})
-                            </p>
-                          )}
-                          <p className="font-mono text-slate-800 tabular-nums">
-                            Wallet: <strong>{formatRwf(u.walletBalanceRwf)}</strong> · Saved: <strong>{formatRwf(u.savingsBalanceRwf)}</strong> · USDT: <strong>{formatUsdt(u.usdtBalance ?? 0)}</strong> · KYC: {u.kycStatus}
-                          </p>
-                        </div>
-                      </div>
+                        );
+                      }
 
-                      <div className="flex flex-wrap items-center gap-2 shrink-0">
-                        {u.accountStatus === 'pending_approval' && (
-                          <button
-                            type="button"
-                            onClick={() => props.onApproveUserRegistration(u.id)}
-                            className="h-9 px-3 bg-[#071B38] hover:bg-[#0c2954] text-white text-xs font-semibold rounded-lg"
-                          >
-                            Approve Registration
-                          </button>
-                        )}
-                        {(u.accountStatus === 'awaiting_payment' || u.accountStatus === 'payment_submitted') && (
-                          <button
-                            type="button"
-                            onClick={() => props.onActivateUserWithBonus(u.id)}
-                            className="h-9 px-3 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-lg"
-                          >
-                            Confirm {props.settings.activationFeeRwf} RWF &amp; Grant {props.settings.welcomeBonusRwf} Bonus
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditingUser({ ...u });
-                            setEditError(null);
-                          }}
-                          className="h-9 px-3 border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold rounded-lg"
-                        >
-                          Edit Info &amp; Photo
-                        </button>
-                        {u.accountStatus === 'active' || u.accountStatus === 'suspended' ? (
-                          <button
-                            type="button"
-                            onClick={() => props.onToggleSuspendUser(u.id)}
-                            className="h-9 px-3 border border-slate-300 bg-white hover:bg-amber-50 text-xs font-semibold rounded-lg text-slate-700"
-                          >
-                            {u.accountStatus === 'suspended' ? 'Unsuspend' : 'Suspend'}
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          onClick={() => setConfirmDeleteUser(u)}
-                          className="h-9 px-3 border border-red-200 bg-red-50 hover:bg-red-100 text-red-800 text-xs font-semibold rounded-lg inline-flex items-center gap-1"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          <span>Delete</span>
-                        </button>
-                      </div>
+                      const u = row.user;
+                      const authMeta = row.authMeta;
+                      return (
+                        <div key={u.id} className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                          <div className="flex items-start gap-4">
+                            {u.photoDataUrl ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPreviewPhoto({
+                                    url: u.photoDataUrl,
+                                    caption: `${u.firstName} ${u.secondName} — Registration Photo`,
+                                  })
+                                }
+                                className="group relative shrink-0"
+                                title="View full photo"
+                              >
+                                <img
+                                  src={u.photoDataUrl}
+                                  alt={`${u.firstName} ${u.secondName}`}
+                                  className="w-16 h-16 rounded-xl object-cover border border-slate-300 group-hover:opacity-90"
+                                />
+                                <span className="absolute bottom-1 right-1 bg-slate-900/75 text-white p-0.5 rounded">
+                                  <Eye className="w-3 h-3" />
+                                </span>
+                              </button>
+                            ) : (
+                              <div className="w-16 h-16 rounded-xl bg-slate-100 border border-slate-200 shrink-0" />
+                            )}
+                            <div className="space-y-1 text-xs">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h3 className="text-sm font-bold text-[#071B38]">
+                                  {u.firstName || 'Unnamed'} {u.secondName}
+                                </h3>
+                                <span className="font-mono text-slate-500">{u.accountNumber}</span>
+                                <StatusLabel
+                                  label={u.accountStatus.replace('_', ' ')}
+                                  tone={
+                                    u.accountStatus === 'active'
+                                      ? 'success'
+                                      : u.accountStatus === 'suspended'
+                                        ? 'danger'
+                                        : 'warning'
+                                  }
+                                />
+                                {authMeta ? (
+                                  <StatusLabel
+                                    label={
+                                      authMeta.emailVerified
+                                        ? 'Auth + Firestore (Verified)'
+                                        : 'Auth + Firestore'
+                                    }
+                                    tone="neutral"
+                                  />
+                                ) : (
+                                  <StatusLabel label="Firestore Profile" tone="neutral" />
+                                )}
+                              </div>
+                              <p className="text-slate-600">
+                                {u.email || '—'} · <span className="font-mono">{u.phone || '—'}</span> · ID:{' '}
+                                <span className="font-mono">{u.idNumber || '—'}</span> · {u.gender} (
+                                {u.dateOfBirth || '—'})
+                              </p>
+                              <p className="text-slate-600">
+                                <strong>{u.education?.type ?? 'University'}:</strong>{' '}
+                                {u.education?.institutionName || '—'} ({u.education?.levelOrClass || '—'},{' '}
+                                {u.education?.facultyOrCombination || '—'})
+                              </p>
+                              <p className="text-slate-600">
+                                <strong>Birth:</strong> {u.residence?.placeOfBirth || '—'}
+                                {u.residence?.province ? ` · ${u.residence.province}` : ''}
+                                {u.residence?.akarere
+                                  ? ` · Residence: ${u.residence.akarere} / ${u.residence.umurenge ?? '-'} / ${u.residence.akagari ?? '-'} / ${u.residence.umudugudu ?? '-'}`
+                                  : ''}
+                              </p>
+                              <p className="text-[11px] font-mono text-slate-400">
+                                UID: {u.id} · Registered: {u.createdAt ? formatDateTime(u.createdAt) : '—'}
+                                {authMeta?.lastSignInAt
+                                  ? ` · Last Sign-In: ${formatDateTime(authMeta.lastSignInAt)}`
+                                  : ''}
+                              </p>
+                              {u.activationPaymentRef && (
+                                <p className="font-mono text-blue-800">
+                                  Activation MoMo Ref: {u.activationPaymentRef} ({u.activationPaidPhone})
+                                </p>
+                              )}
+                              <p className="font-mono text-slate-800 tabular-nums">
+                                Wallet: <strong>{formatRwf(u.walletBalanceRwf)}</strong> · Saved:{' '}
+                                <strong>{formatRwf(u.savingsBalanceRwf)}</strong> · USDT:{' '}
+                                <strong>{formatUsdt(u.usdtBalance ?? 0)}</strong> · KYC: {u.kycStatus}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2 shrink-0">
+                            {u.accountStatus === 'pending_approval' && (
+                              <button
+                                type="button"
+                                onClick={() => props.onApproveUserRegistration(u.id)}
+                                className="h-9 px-3 bg-[#071B38] hover:bg-[#0c2954] text-white text-xs font-semibold rounded-lg"
+                              >
+                                Approve Registration
+                              </button>
+                            )}
+                            {(u.accountStatus === 'awaiting_payment' ||
+                              u.accountStatus === 'payment_submitted') && (
+                              <button
+                                type="button"
+                                onClick={() => props.onActivateUserWithBonus(u.id)}
+                                className="h-9 px-3 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-lg"
+                              >
+                                Confirm {props.settings.activationFeeRwf} RWF &amp; Grant{' '}
+                                {props.settings.welcomeBonusRwf} Bonus
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingUser({ ...u });
+                                setEditError(null);
+                              }}
+                              className="h-9 px-3 border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold rounded-lg"
+                            >
+                              Edit Info &amp; Photo
+                            </button>
+                            {u.accountStatus === 'active' || u.accountStatus === 'suspended' ? (
+                              <button
+                                type="button"
+                                onClick={() => props.onToggleSuspendUser(u.id)}
+                                className="h-9 px-3 border border-slate-300 bg-white hover:bg-amber-50 text-xs font-semibold rounded-lg text-slate-700"
+                              >
+                                {u.accountStatus === 'suspended' ? 'Unsuspend' : 'Suspend'}
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteUser(u)}
+                              className="h-9 px-3 border border-red-200 bg-red-50 hover:bg-red-100 text-red-800 text-xs font-semibold rounded-lg inline-flex items-center gap-1"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Delete</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Pagination Footer */}
+                  <div className="px-6 py-3.5 border-t border-slate-200 bg-slate-50/70 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600">
+                    <span className="font-mono">
+                      Showing {(safeUserPage - 1) * usersPageSize + 1}–
+                      {Math.min(safeUserPage * usersPageSize, filteredDirectoryUsers.length)} of{' '}
+                      {filteredDirectoryUsers.length} users
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={safeUserPage <= 1}
+                        onClick={() => setUsersPage((p) => Math.max(1, p - 1))}
+                        className="h-8 px-2.5 border border-slate-300 bg-white rounded-md font-semibold disabled:opacity-40 inline-flex items-center gap-1"
+                      >
+                        <ChevronLeft className="w-3.5 h-3.5" />
+                        <span>Previous</span>
+                      </button>
+                      <span className="font-mono px-2">
+                        Page {safeUserPage} of {totalUserPages}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={safeUserPage >= totalUserPages}
+                        onClick={() => setUsersPage((p) => Math.min(totalUserPages, p + 1))}
+                        className="h-8 px-2.5 border border-slate-300 bg-white rounded-md font-semibold disabled:opacity-40 inline-flex items-center gap-1"
+                      >
+                        <span>Next</span>
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
                     </div>
-                  ))}
-                </div>
+                  </div>
+                </>
               )}
             </div>
           )}
@@ -1124,22 +1461,51 @@ export function AdminDashboard(props: AdminDashboardProps) {
                   </div>
 
                   <form
-                    onSubmit={(e) => {
+                    onSubmit={async (e) => {
                       e.preventDefault();
-                      if (!vidUrl.trim() || vidTitle.trim().length < 3) return;
-                      props.onAdminCreateVideoCampaign({
-                        title: vidTitle.trim(),
-                        description: vidDesc.trim() || 'Official E-Finance Rwanda video campaign',
-                        videoUrl: vidUrl.trim(),
-                        rewardPerViewRwf: Math.max(props.settings.minVideoRewardRwf, Number(vidReward) || 50),
-                        targetViewers: Math.max(1, Number(vidTarget) || 20),
-                      });
-                      setVidTitle('');
-                      setVidDesc('');
-                      setVidUrl('');
-                      setVidFileName('');
-                      setVidNotice('Short video published immediately as active!');
-                      setTimeout(() => setVidNotice(null), 3000);
+                      setVidError(null);
+                      setVidNotice(null);
+                      if (vidTitle.trim().length < 3) {
+                        setVidError('Enter a video title (at least 3 characters).');
+                        return;
+                      }
+                      if (!vidFile && !vidUrl.trim()) {
+                        setVidError('Upload a video file (max 6 MB) or paste a valid video URL.');
+                        return;
+                      }
+                      const reqSec = Math.max(5, Math.min(600, Math.round(Number(vidRequiredSec) || 15)));
+                      setVidUploading(true);
+                      setVidProgress(vidFile ? { percent: 5, stage: 'Starting upload…' } : null);
+                      try {
+                        const errMsg = await props.onAdminCreateVideoCampaign({
+                          title: vidTitle.trim(),
+                          description: vidDesc.trim() || 'Official E-Finance Rwanda video campaign',
+                          videoUrl: vidUrl.trim(),
+                          videoFile: vidFile,
+                          requiredWatchSeconds: reqSec,
+                          rewardPerViewRwf: Math.max(props.settings.minVideoRewardRwf, Number(vidReward) || 50),
+                          targetViewers: Math.max(1, Number(vidTarget) || 20),
+                          onUploadProgress: (percent, stage) => setVidProgress({ percent, stage }),
+                        });
+                        if (errMsg) {
+                          setVidError(errMsg);
+                          return;
+                        }
+                        setVidTitle('');
+                        setVidDesc('');
+                        setVidUrl('');
+                        if (vidPreviewUrl) URL.revokeObjectURL(vidPreviewUrl);
+                        setVidPreviewUrl(null);
+                        setVidFile(null);
+                        setVidRequiredSec('15');
+                        setVidNotice('Short video published immediately as active!');
+                        setTimeout(() => setVidNotice(null), 4000);
+                      } catch (err) {
+                        setVidError(err instanceof Error ? err.message : 'Unable to publish video.');
+                      } finally {
+                        setVidUploading(false);
+                        setVidProgress(null);
+                      }
                     }}
                     className="space-y-3"
                   >
@@ -1161,39 +1527,87 @@ export function AdminDashboard(props: AdminDashboardProps) {
                     <div className="flex flex-col sm:flex-row gap-2">
                       <input
                         type="text"
-                        value={vidUrl.startsWith('data:') ? '' : vidUrl}
+                        value={vidFile ? '' : vidUrl}
                         onChange={(e) => {
+                          if (vidPreviewUrl) URL.revokeObjectURL(vidPreviewUrl);
+                          setVidPreviewUrl(null);
+                          setVidFile(null);
                           setVidUrl(e.target.value);
-                          setVidFileName('');
                         }}
-                        placeholder="Paste MP4 Video URL or upload file →"
+                        placeholder="Paste MP4, YouTube, Vimeo, or Google Drive URL →"
                         className="flex-1 h-10 px-3 text-xs font-mono bg-white border border-slate-300 rounded-lg"
                       />
                       <label className="cursor-pointer h-10 px-3 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 shrink-0">
                         <Upload className="w-3.5 h-3.5" />
-                        <span>{vidFileName ? 'Video Ready' : 'Upload File'}</span>
+                        <span>{vidFile ? 'Replace File' : 'Upload File (6 MB)'}</span>
                         <input
                           type="file"
-                          accept="video/*"
-                          onChange={async (e) => {
+                          accept="video/mp4,video/webm,video/quicktime,video/ogg,video/*"
+                          onChange={(e) => {
+                            setVidError(null);
                             const f = e.target.files?.[0];
                             if (!f) return;
-                            try {
-                              const dataUrl = await readFileAsDataUrl(f, 4);
-                              setVidUrl(dataUrl);
-                              setVidFileName(f.name);
-                            } catch {
-                              // ignore oversized
+                            if (f.size > MAX_LOCAL_VIDEO_FILE_BYTES) {
+                              setVidError(
+                                `Video (${formatBytes(f.size)}) exceeds the 6 MB upload limit. Compress under 6 MB or paste a URL.`,
+                              );
+                              return;
                             }
+                            if (vidPreviewUrl) URL.revokeObjectURL(vidPreviewUrl);
+                            setVidFile(f);
+                            setVidUrl('');
+                            setVidPreviewUrl(URL.createObjectURL(f));
+                            e.target.value = '';
                           }}
                           className="sr-only"
                         />
                       </label>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    {vidFile && (
+                      <div className="flex items-center justify-between gap-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                        <span className="truncate font-medium">
+                          Ready: {vidFile.name} ({formatBytes(vidFile.size)})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (vidPreviewUrl) URL.revokeObjectURL(vidPreviewUrl);
+                            setVidPreviewUrl(null);
+                            setVidFile(null);
+                          }}
+                          className="text-slate-600 hover:text-red-700"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                    {vidPreviewUrl && (
+                      <video
+                        src={vidPreviewUrl}
+                        controls
+                        playsInline
+                        preload="metadata"
+                        className="w-full max-h-36 rounded-lg bg-black border border-slate-200"
+                      />
+                    )}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div>
                         <label className="block text-[11px] text-slate-600 mb-1">
-                          Reward / View (Min {props.settings.minVideoRewardRwf} RWF)
+                          Required Watch (sec)
+                        </label>
+                        <input
+                          type="number"
+                          min={5}
+                          max={600}
+                          value={vidRequiredSec}
+                          onChange={(e) => setVidRequiredSec(e.target.value)}
+                          required
+                          className="w-full h-9 px-3 text-xs font-mono border border-slate-300 rounded-lg"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-slate-600 mb-1">
+                          Reward / View (Min {props.settings.minVideoRewardRwf})
                         </label>
                         <input
                           type="number"
@@ -1218,12 +1632,29 @@ export function AdminDashboard(props: AdminDashboardProps) {
                         />
                       </div>
                     </div>
+                    {vidProgress && (
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px] text-slate-600">
+                          <span>{vidProgress.stage}</span>
+                          <span className="font-mono">{vidProgress.percent}%</span>
+                        </div>
+                        <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-[#071B38] transition-all duration-300"
+                            style={{ width: `${vidProgress.percent}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {vidError && <p className="text-xs font-semibold text-red-700">{vidError}</p>}
                     {vidNotice && <p className="text-xs font-semibold text-emerald-700">{vidNotice}</p>}
                     <button
                       type="submit"
-                      className="w-full h-10 bg-[#071B38] hover:bg-[#0c2954] text-white text-xs font-semibold rounded-lg"
+                      disabled={vidUploading}
+                      className="w-full h-10 bg-[#071B38] hover:bg-[#0c2954] disabled:opacity-60 text-white text-xs font-semibold rounded-lg inline-flex items-center justify-center gap-2"
                     >
-                      Publish Active Video Now
+                      {vidUploading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                      <span>{vidUploading ? 'Uploading & Publishing…' : 'Publish Active Video Now'}</span>
                     </button>
                   </form>
                 </section>
@@ -1235,26 +1666,54 @@ export function AdminDashboard(props: AdminDashboardProps) {
                         Admin Publish Paid Task (Instant Active)
                       </h2>
                       <p className="text-xs text-slate-500">
-                        Directly create a task with requirements for members to complete.
+                        Directly create a task (optionally with an in-app video) for members to complete.
                       </p>
                     </div>
                     <PlusCircle className="w-5 h-5 text-emerald-700" />
                   </div>
 
                   <form
-                    onSubmit={(e) => {
+                    onSubmit={async (e) => {
                       e.preventDefault();
-                      if (tskTitle.trim().length < 3 || tskReqs.trim().length < 5) return;
-                      props.onAdminCreateCustomTask({
-                        title: tskTitle.trim(),
-                        requirements: tskReqs.trim(),
-                        rewardPerCompletionRwf: Math.max(20, Number(tskReward) || 50),
-                        targetCompletions: Math.max(1, Number(tskTarget) || 20),
-                      });
-                      setTskTitle('');
-                      setTskReqs('');
-                      setTskNotice('Paid task published immediately as active!');
-                      setTimeout(() => setTskNotice(null), 3000);
+                      setTskError(null);
+                      setTskNotice(null);
+                      if (tskTitle.trim().length < 3 || tskReqs.trim().length < 5) {
+                        setTskError('Provide a task title and clear requirements.');
+                        return;
+                      }
+                      const reqSec = Math.max(5, Math.min(600, Math.round(Number(tskRequiredSec) || 15)));
+                      setTskUploading(true);
+                      setTskProgress(tskVideoFile ? { percent: 5, stage: 'Uploading task video…' } : null);
+                      try {
+                        const errMsg = await props.onAdminCreateCustomTask({
+                          title: tskTitle.trim(),
+                          requirements: tskReqs.trim(),
+                          videoUrl: tskVideoUrl.trim() || undefined,
+                          videoFile: tskVideoFile,
+                          requiredWatchSeconds: tskVideoFile || tskVideoUrl.trim() ? reqSec : undefined,
+                          rewardPerCompletionRwf: Math.max(20, Number(tskReward) || 50),
+                          targetCompletions: Math.max(1, Number(tskTarget) || 20),
+                          onUploadProgress: (percent, stage) => setTskProgress({ percent, stage }),
+                        });
+                        if (errMsg) {
+                          setTskError(errMsg);
+                          return;
+                        }
+                        setTskTitle('');
+                        setTskReqs('');
+                        setTskVideoUrl('');
+                        if (tskPreviewUrl) URL.revokeObjectURL(tskPreviewUrl);
+                        setTskPreviewUrl(null);
+                        setTskVideoFile(null);
+                        setTskRequiredSec('15');
+                        setTskNotice('Paid task published immediately as active!');
+                        setTimeout(() => setTskNotice(null), 4000);
+                      } catch (err) {
+                        setTskError(err instanceof Error ? err.message : 'Unable to create task.');
+                      } finally {
+                        setTskUploading(false);
+                        setTskProgress(null);
+                      }
                     }}
                     className="space-y-3"
                   >
@@ -1267,17 +1726,85 @@ export function AdminDashboard(props: AdminDashboardProps) {
                       className="w-full h-10 px-3 text-sm bg-white border border-slate-300 rounded-lg"
                     />
                     <textarea
-                      rows={3}
+                      rows={2}
                       value={tskReqs}
                       onChange={(e) => setTskReqs(e.target.value)}
                       placeholder="Exact requirements members must prove..."
                       required
                       className="w-full p-3 text-xs bg-white border border-slate-300 rounded-lg"
                     />
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        value={tskVideoFile ? '' : tskVideoUrl}
+                        onChange={(e) => {
+                          if (tskPreviewUrl) URL.revokeObjectURL(tskPreviewUrl);
+                          setTskPreviewUrl(null);
+                          setTskVideoFile(null);
+                          setTskVideoUrl(e.target.value);
+                        }}
+                        placeholder="Optional Task Video URL (YouTube/MP4/Vimeo)"
+                        className="flex-1 h-9 px-3 text-xs font-mono bg-white border border-slate-300 rounded-lg"
+                      />
+                      <label className="cursor-pointer h-9 px-3 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 shrink-0">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>{tskVideoFile ? 'Replace' : 'Video (6 MB)'}</span>
+                        <input
+                          type="file"
+                          accept="video/mp4,video/webm,video/quicktime,video/ogg,video/*"
+                          onChange={(e) => {
+                            setTskError(null);
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            if (f.size > MAX_LOCAL_VIDEO_FILE_BYTES) {
+                              setTskError(`Task video (${formatBytes(f.size)}) exceeds the 6 MB limit.`);
+                              return;
+                            }
+                            if (tskPreviewUrl) URL.revokeObjectURL(tskPreviewUrl);
+                            setTskVideoFile(f);
+                            setTskVideoUrl('');
+                            setTskPreviewUrl(URL.createObjectURL(f));
+                            e.target.value = '';
+                          }}
+                          className="sr-only"
+                        />
+                      </label>
+                    </div>
+                    {tskVideoFile && (
+                      <div className="flex items-center justify-between gap-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                        <span className="truncate font-medium">
+                          Ready: {tskVideoFile.name} ({formatBytes(tskVideoFile.size)})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (tskPreviewUrl) URL.revokeObjectURL(tskPreviewUrl);
+                            setTskPreviewUrl(null);
+                            setTskVideoFile(null);
+                          }}
+                          className="text-slate-600 hover:text-red-700"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div>
                         <label className="block text-[11px] text-slate-600 mb-1">
-                          Reward / Completion (RWF)
+                          Watch Req (sec)
+                        </label>
+                        <input
+                          type="number"
+                          min={5}
+                          max={600}
+                          value={tskRequiredSec}
+                          onChange={(e) => setTskRequiredSec(e.target.value)}
+                          className="w-full h-9 px-3 text-xs font-mono border border-slate-300 rounded-lg"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-slate-600 mb-1">
+                          Reward / Completion
                         </label>
                         <input
                           type="number"
@@ -1302,12 +1829,29 @@ export function AdminDashboard(props: AdminDashboardProps) {
                         />
                       </div>
                     </div>
+                    {tskProgress && (
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px] text-slate-600">
+                          <span>{tskProgress.stage}</span>
+                          <span className="font-mono">{tskProgress.percent}%</span>
+                        </div>
+                        <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-emerald-700 transition-all duration-300"
+                            style={{ width: `${tskProgress.percent}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {tskError && <p className="text-xs font-semibold text-red-700">{tskError}</p>}
                     {tskNotice && <p className="text-xs font-semibold text-emerald-700">{tskNotice}</p>}
                     <button
                       type="submit"
-                      className="w-full h-10 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-lg"
+                      disabled={tskUploading}
+                      className="w-full h-10 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white text-xs font-semibold rounded-lg inline-flex items-center justify-center gap-2"
                     >
-                      Publish Active Task Now
+                      {tskUploading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                      <span>{tskUploading ? 'Uploading & Publishing…' : 'Publish Active Task Now'}</span>
                     </button>
                   </form>
                 </section>
@@ -1409,7 +1953,9 @@ export function AdminDashboard(props: AdminDashboardProps) {
                           <div>
                             <h3 className="text-sm font-semibold text-slate-900">{camp.title}</h3>
                             <p className="text-xs text-slate-500 font-mono">
-                              By {camp.creatorName} · {formatRwf(camp.rewardPerViewRwf)}/view × {camp.targetViewers} views = {formatRwf(camp.totalBudgetRwf)} · Code: {camp.paymentCode} · Ref: {camp.paymentRef}
+                              By {camp.creatorName} · {camp.watchedByUserIds.length}/{camp.targetViewers} views ·{' '}
+                              {camp.requiredWatchSeconds ?? 15}s req · {formatRwf(camp.rewardPerViewRwf)}/view ={' '}
+                              {formatRwf(camp.totalBudgetRwf)} · Code: {camp.paymentCode} · Ref: {camp.paymentRef}
                             </p>
                           </div>
                           <StatusLabel
@@ -1423,7 +1969,14 @@ export function AdminDashboard(props: AdminDashboardProps) {
                             }
                           />
                         </div>
-                        <video src={camp.videoUrl} controls className="max-h-44 rounded-lg border border-slate-200 bg-black" />
+                        <div className="max-w-lg">
+                          <SmartVideoPlayer
+                            videoUrl={camp.videoUrl}
+                            title={camp.title}
+                            compact
+                            trackWatchCompletion={false}
+                          />
+                        </div>
                         {camp.status === 'pending_admin' && (
                           <div className="flex gap-2">
                             <button
@@ -1458,11 +2011,19 @@ export function AdminDashboard(props: AdminDashboardProps) {
                 ) : (
                   <div className="divide-y divide-slate-200">
                     {props.customTasks.map((task) => (
-                      <div key={task.id} className="p-5 space-y-2">
+                      <div key={task.id} className="p-5 space-y-2.5">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
-                            <h3 className="text-sm font-semibold text-slate-900">{task.title}</h3>
-                            <p className="text-xs font-mono text-slate-500">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="text-sm font-semibold text-slate-900">{task.title}</h3>
+                              {task.videoUrl && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 border border-blue-200 text-[11px] font-mono text-blue-900">
+                                  <Clock className="w-3 h-3" />
+                                  {task.requiredWatchSeconds ?? 15}s Video Attached
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs font-mono text-slate-500 mt-0.5">
                               By {task.creatorName} · {formatRwf(task.rewardPerCompletionRwf)} × {task.targetCompletions} = {formatRwf(task.totalBudgetRwf)} · Ref: {task.paymentRef}
                             </p>
                           </div>
@@ -1472,6 +2033,16 @@ export function AdminDashboard(props: AdminDashboardProps) {
                           />
                         </div>
                         <p className="text-xs text-slate-600">{task.requirements}</p>
+                        {task.videoUrl && (
+                          <div className="max-w-lg pt-1">
+                            <SmartVideoPlayer
+                              videoUrl={task.videoUrl}
+                              title={task.title}
+                              compact
+                              trackWatchCompletion={false}
+                            />
+                          </div>
+                        )}
                         {task.status === 'pending_admin' && (
                           <div className="flex gap-2 pt-1">
                             <button
@@ -2129,11 +2700,11 @@ export function AdminDashboard(props: AdminDashboardProps) {
                 <label className="block font-medium text-slate-700 mb-1">Akarere</label>
                 <input
                   type="text"
-                  value={editingUser.residence.akarere ?? ''}
+                  value={editingUser.residence?.akarere ?? ''}
                   onChange={(e) =>
                     setEditingUser({
                       ...editingUser,
-                      residence: { ...editingUser.residence, akarere: e.target.value },
+                      residence: { ...(editingUser.residence ?? { placeOfBirth: '' }), akarere: e.target.value },
                     })
                   }
                   className="w-full h-9 px-3 border border-slate-300 rounded-lg"
@@ -2143,11 +2714,11 @@ export function AdminDashboard(props: AdminDashboardProps) {
                 <label className="block font-medium text-slate-700 mb-1">Umurenge</label>
                 <input
                   type="text"
-                  value={editingUser.residence.umurenge ?? ''}
+                  value={editingUser.residence?.umurenge ?? ''}
                   onChange={(e) =>
                     setEditingUser({
                       ...editingUser,
-                      residence: { ...editingUser.residence, umurenge: e.target.value },
+                      residence: { ...(editingUser.residence ?? { placeOfBirth: '' }), umurenge: e.target.value },
                     })
                   }
                   className="w-full h-9 px-3 border border-slate-300 rounded-lg"

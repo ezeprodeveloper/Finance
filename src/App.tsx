@@ -30,6 +30,8 @@ function AppContent() {
     profileError,
     role,
     store,
+    videoWatchSessions,
+    adminUsersMeta,
     currentUser,
     referredUsersCount,
     publicStats,
@@ -41,7 +43,9 @@ function AppContent() {
     registerMember,
     recoverProfile,
     retryProfileLoad,
+    refreshAdminUsers,
     signOutUser,
+    getIdToken,
   } = useAuth();
 
   const [loginOpen, setLoginOpen] = useState(false);
@@ -298,41 +302,86 @@ function AppContent() {
     );
   };
 
-  const handleWatchVideoComplete = async (campaignId: string) => {
-    if (!authUid) return;
-    await runAction(() => firestoreService.watchVideoComplete(authUid, campaignId));
+  const handleWatchVideoComplete = async (
+    campaignId: string,
+    verificationSignature?: string,
+  ): Promise<string | null> => {
+    if (!authUid) return 'Sign in required.';
+    setActionError(null);
+    try {
+      const token = (await getIdToken()) ?? undefined;
+      await firestoreService.watchVideoComplete(authUid, campaignId, verificationSignature, token);
+      return null;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unable to credit video reward.';
+      setActionError(msg);
+      return msg;
+    }
   };
 
   const handleCreateVideoCampaign = async (payload: {
     title: string;
     description: string;
     videoUrl: string;
+    videoFile?: File | null;
+    requiredWatchSeconds: number;
     rewardPerViewRwf: number;
     targetViewers: number;
     paymentRef: string;
-  }) => {
-    if (!authUid) return;
-    await runAction(() => firestoreService.createVideoCampaign(authUid, payload));
+    onUploadProgress?: (percent: number, stage: string) => void;
+  }): Promise<string | null> => {
+    if (!authUid) return 'Sign in required.';
+    setActionError(null);
+    try {
+      await firestoreService.createVideoCampaign(authUid, payload);
+      return null;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Video campaign upload failed.';
+      setActionError(msg);
+      return msg;
+    }
   };
 
   const handleSubmitTaskProof = async (payload: {
     taskId: string;
     proofText: string;
     proofUrl?: string;
-  }) => {
-    if (!authUid) return;
-    await runAction(() => firestoreService.submitTaskProof(authUid, payload));
+    verificationSignature?: string;
+  }): Promise<string | null> => {
+    if (!authUid) return 'Sign in required.';
+    setActionError(null);
+    try {
+      const token = (await getIdToken()) ?? undefined;
+      await firestoreService.submitTaskProof(authUid, { ...payload, authToken: token });
+      return null;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unable to submit task proof.';
+      setActionError(msg);
+      return msg;
+    }
   };
 
   const handleCreateCustomTask = async (payload: {
     title: string;
     requirements: string;
+    videoUrl?: string;
+    videoFile?: File | null;
+    requiredWatchSeconds?: number;
     rewardPerCompletionRwf: number;
     targetCompletions: number;
     paymentRef: string;
-  }) => {
-    if (!authUid) return;
-    await runAction(() => firestoreService.createCustomTask(authUid, payload));
+    onUploadProgress?: (percent: number, stage: string) => void;
+  }): Promise<string | null> => {
+    if (!authUid) return 'Sign in required.';
+    setActionError(null);
+    try {
+      await firestoreService.createCustomTask(authUid, payload);
+      return null;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unable to create task.';
+      setActionError(msg);
+      return msg;
+    }
   };
 
   /* ------------------------------------------------------------------------ */
@@ -370,10 +419,21 @@ function AppContent() {
     title: string;
     description: string;
     videoUrl: string;
+    videoFile?: File | null;
+    requiredWatchSeconds?: number;
     rewardPerViewRwf: number;
     targetViewers: number;
-  }) => {
-    await runAction(() => firestoreService.adminCreateVideo(payload));
+    onUploadProgress?: (percent: number, stage: string) => void;
+  }): Promise<string | null> => {
+    setActionError(null);
+    try {
+      await firestoreService.adminCreateVideo(payload);
+      return null;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Admin video upload failed.';
+      setActionError(msg);
+      return msg;
+    }
   };
 
   const handleReviewVideoCampaign = async (
@@ -386,10 +446,22 @@ function AppContent() {
   const handleAdminCreateCustomTask = async (payload: {
     title: string;
     requirements: string;
+    videoUrl?: string;
+    videoFile?: File | null;
+    requiredWatchSeconds?: number;
     rewardPerCompletionRwf: number;
     targetCompletions: number;
-  }) => {
-    await runAction(() => firestoreService.adminCreateTask(payload));
+    onUploadProgress?: (percent: number, stage: string) => void;
+  }): Promise<string | null> => {
+    setActionError(null);
+    try {
+      await firestoreService.adminCreateTask(payload);
+      return null;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Admin task creation failed.';
+      setActionError(msg);
+      return msg;
+    }
   };
 
   const handleReviewCustomTask = async (taskId: string, decision: 'active' | 'rejected') => {
@@ -495,6 +567,7 @@ function AppContent() {
       return (
         <AdminDashboard
           users={store.users}
+          adminUsersMeta={adminUsersMeta}
           loans={store.loans}
           investments={store.investments}
           withdrawals={store.withdrawals}
@@ -531,6 +604,7 @@ function AppContent() {
           onTogglePromotion={handleTogglePromotion}
           onDeletePromotion={handleDeletePromotion}
           onUpdateSettings={handleUpdateSettings}
+          onRefreshUsers={refreshAdminUsers}
           onSignOut={handleSignOut}
         />
       );
@@ -609,6 +683,8 @@ function AppContent() {
           fxExchanges={store.fxExchanges}
           usdtRequests={store.usdtRequests}
           transactions={store.transactions}
+          videoWatchSessions={videoWatchSessions}
+          getAuthToken={getIdToken}
           notifications={store.notifications}
           onMarkNotificationRead={handleMarkNotificationRead}
           onSubmitActivationPayment={handleSubmitActivationPayment}

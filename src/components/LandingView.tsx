@@ -325,15 +325,6 @@ export function LandingView({
             <span>© {new Date().getFullYear()} E-Finance Rwanda.</span>
           </div>
           <div className="flex flex-wrap items-center gap-5 text-xs font-medium">
-            {import.meta.env.VITE_PHP_BACKEND !== 'true' && (
-              <a
-                href="/downloads/efinance-xampp-infinityfree.zip"
-                download="efinance-xampp-infinityfree.zip"
-                className="text-blue-800 hover:underline font-semibold"
-              >
-                Download XAMPP &amp; InfinityFree Package (.zip)
-              </a>
-            )}
             <button type="button" onClick={onOpenRegister} className="hover:text-slate-950">
               Register
             </button>

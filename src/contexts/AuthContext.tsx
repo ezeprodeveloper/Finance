@@ -3,10 +3,37 @@ import type { User as FirebaseUser } from 'firebase/auth';
 import { INITIAL_PLATFORM_STATE } from '../data/platformStore';
 import { authPersistenceReady } from '../lib/firebase';
 import { firestoreService, type MemberProfileDraft } from '../services/firestoreService';
-import type { PlatformStoreState, RegisteredUser } from '../types/finance';
+import type { PlatformStoreState, RegisteredUser, VideoWatchSessionRecord } from '../types/finance';
 
 export type AuthLifecycleStatus = 'initializing' | 'authenticated' | 'unauthenticated';
 export type ProfileLifecycleStatus = 'idle' | 'loading' | 'ready' | 'missing' | 'error';
+
+export interface AdminMergedAuthEntry {
+  uid: string;
+  authExists: boolean;
+  firestoreExists: boolean;
+  email: string;
+  displayName: string;
+  phone: string;
+  emailVerified: boolean;
+  disabled: boolean;
+  authCreatedAt: string;
+  lastSignInAt: string;
+  profile: RegisteredUser | null;
+}
+
+export interface AdminUsersDirectoryMeta {
+  authLookupAvailable: boolean | null;
+  totalAuthUsers: number;
+  authUsers: AdminMergedAuthEntry[];
+  reason?: string;
+}
+
+const EMPTY_ADMIN_USERS_META: AdminUsersDirectoryMeta = {
+  authLookupAvailable: null,
+  totalAuthUsers: 0,
+  authUsers: [],
+};
 
 interface AuthContextValue {
   firebaseUser: FirebaseUser | null;
@@ -16,6 +43,8 @@ interface AuthContextValue {
   profileError: string | null;
   role: 'guest' | 'user' | 'admin';
   store: PlatformStoreState;
+  videoWatchSessions: VideoWatchSessionRecord[];
+  adminUsersMeta: AdminUsersDirectoryMeta;
   currentUser: RegisteredUser | null;
   referredUsersCount: number;
   publicStats: { totalActiveVideos: number; totalActiveTasks: number };
@@ -34,6 +63,7 @@ interface AuthContextValue {
   ) => Promise<string | null>;
   recoverProfile: (draft: MemberProfileDraft) => Promise<string | null>;
   retryProfileLoad: () => Promise<void>;
+  refreshAdminUsers: () => Promise<{ count: number; error: string | null }>;
   signOutUser: () => Promise<void>;
   getIdToken: () => Promise<string | null>;
 }
@@ -48,6 +78,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profileError, setProfileError] = useState<string | null>(null);
   const [role, setRole] = useState<'guest' | 'user' | 'admin'>('guest');
   const [store, setStore] = useState<PlatformStoreState>(INITIAL_PLATFORM_STATE);
+  const [videoWatchSessions, setVideoWatchSessions] = useState<VideoWatchSessionRecord[]>([]);
+  const [adminUsersMeta, setAdminUsersMeta] = useState<AdminUsersDirectoryMeta>(EMPTY_ADMIN_USERS_META);
   const [referredUsersCount, setReferredUsersCount] = useState(0);
   const [publicStats, setPublicStats] = useState({ totalActiveVideos: 0, totalActiveTasks: 0 });
   const [actionError, setActionError] = useState<string | null>(null);
@@ -61,6 +93,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setProfileStatus('idle');
     setProfileError(null);
     setReferredUsersCount(0);
+    setVideoWatchSessions([]);
+    setAdminUsersMeta(EMPTY_ADMIN_USERS_META);
     setStore((prev) => ({
       ...INITIAL_PLATFORM_STATE,
       settings: prev.settings,
@@ -160,6 +194,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         authUid,
         (snapshot) => {
           setReferredUsersCount(snapshot.referredUsersCount);
+          setVideoWatchSessions(snapshot.videoWatchSessions);
           setStore((prev) => ({
             ...prev,
             users: snapshot.user ? [snapshot.user] : [],
@@ -233,6 +268,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     if (role === 'admin' && authUid) {
+      if (firebaseUser) {
+        void firebaseUser
+          .getIdToken()
+          .then((token) => firestoreService.fetchAdminMergedUsers(token))
+          .then((merged) => {
+            setAdminUsersMeta({
+              authLookupAvailable: merged.authLookupAvailable,
+              totalAuthUsers: merged.totalAuthUsers ?? merged.authUsers.length,
+              authUsers: merged.authUsers,
+              reason: merged.reason,
+            });
+          })
+          .catch(() => {});
+      }
+
       return firestoreService.subscribeAdminWorkspace(
         (snapshot) => {
           setStore((prev) => ({
@@ -261,7 +311,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         (err) => setActionError(err.message),
       );
     }
-  }, [authStatus, role, authUid, workspaceGeneration, signOutUser]);
+  }, [authStatus, role, authUid, firebaseUser, workspaceGeneration, signOutUser]);
 
   const currentUser =
     role === 'user' && authUid
@@ -393,6 +443,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [authUid]);
 
+  const refreshAdminUsers = useCallback(async (): Promise<{ count: number; error: string | null }> => {
+    try {
+      const serverUsers = await firestoreService.fetchAllUsersFromServer();
+      let mergedCount = serverUsers.length;
+      if (firebaseUser) {
+        const token = await firebaseUser.getIdToken().catch(() => null);
+        if (token) {
+          const merged = await firestoreService.fetchAdminMergedUsers(token);
+          setAdminUsersMeta({
+            authLookupAvailable: merged.authLookupAvailable,
+            totalAuthUsers: merged.totalAuthUsers ?? merged.authUsers.length,
+            authUsers: merged.authUsers,
+            reason: merged.reason,
+          });
+          if (merged.authLookupAvailable) {
+            const seenUids = new Set(serverUsers.map((u) => u.id));
+            const authOnlyCount = merged.authUsers.filter((a) => !seenUids.has(a.uid)).length;
+            mergedCount = serverUsers.length + authOnlyCount;
+          }
+        }
+      }
+      setStore((prev) => ({
+        ...prev,
+        users: serverUsers,
+      }));
+      return { count: mergedCount, error: null };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unable to fetch users from Firestore.';
+      return { count: store.users.length, error: msg };
+    }
+  }, [firebaseUser, store.users.length]);
+
   const getIdToken = useCallback(async (): Promise<string | null> => {
     if (!firebaseUser) return null;
     try {
@@ -412,6 +494,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         profileError,
         role,
         store,
+        videoWatchSessions,
+        adminUsersMeta,
         currentUser,
         referredUsersCount,
         publicStats,
@@ -423,6 +507,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         registerMember,
         recoverProfile,
         retryProfileLoad,
+        refreshAdminUsers,
         signOutUser,
         getIdToken,
       }}

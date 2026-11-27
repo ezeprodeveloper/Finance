@@ -314,6 +314,7 @@
         "title": { "type": "string", "maxLength": 200 },
         "description": { "type": "string", "maxLength": 1000 },
         "videoUrl": { "type": "string", "maxLength": 500000 },
+        "requiredWatchSeconds": { "type": "number" },
         "rewardPerViewRwf": { "type": "number" },
         "targetViewers": { "type": "number" },
         "totalBudgetRwf": { "type": "number" },
@@ -350,6 +351,8 @@
         "creatorName": { "type": "string", "maxLength": 200 },
         "title": { "type": "string", "maxLength": 200 },
         "requirements": { "type": "string", "maxLength": 2000 },
+        "videoUrl": { "type": "string", "maxLength": 500000 },
+        "requiredWatchSeconds": { "type": "number" },
         "rewardPerCompletionRwf": { "type": "number" },
         "targetCompletions": { "type": "number" },
         "totalBudgetRwf": { "type": "number" },
@@ -597,6 +600,56 @@
         "updatedAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["totalActiveVideos", "totalActiveTasks"]
+    },
+    "VideoChunk": {
+      "title": "VideoChunk",
+      "description": "Chunked base64 video payload persisted in Firestore when Storage is unavailable.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "videoId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "chunkIndex": { "type": "number" },
+        "totalChunks": { "type": "number" },
+        "contentType": { "type": "string", "maxLength": 100 },
+        "data": { "type": "string", "maxLength": 400000 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "videoId", "ownerUid", "chunkIndex", "totalChunks", "contentType", "data", "createdAt"]
+    },
+    "VideoWatchSession": {
+      "title": "VideoWatchSession",
+      "description": "Server-clock verified video/task watch progress and reward claim lock.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "targetType": { "type": "string", "enum": ["video", "task"] },
+        "targetId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "requiredSeconds": { "type": "number" },
+        "accumulatedSeconds": { "type": "number" },
+        "heartbeatCount": { "type": "number" },
+        "status": { "type": "string", "enum": ["watching", "completed", "claimed"] },
+        "startedAtMs": { "type": "number" },
+        "lastHeartbeatAtMs": { "type": "number" },
+        "completedAtMs": { "type": "number" },
+        "claimedAtMs": { "type": "number" },
+        "verificationSignature": { "type": "string", "maxLength": 1024 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": [
+        "id",
+        "userId",
+        "targetType",
+        "targetId",
+        "requiredSeconds",
+        "accumulatedSeconds",
+        "heartbeatCount",
+        "status",
+        "startedAtMs",
+        "lastHeartbeatAtMs",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -651,6 +704,14 @@
     "/videoCampaigns/{campaignId}": {
       "schema": { "$ref": "#/entities/ShortVideoCampaign" },
       "description": "Watch-to-earn promotional short videos."
+    },
+    "/videoChunks/{chunkId}": {
+      "schema": { "$ref": "#/entities/VideoChunk" },
+      "description": "Chunked video media segments referenced by efinance-video:// URLs."
+    },
+    "/videoWatchSessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/VideoWatchSession" },
+      "description": "Verified viewing progress and reward claim lock per user/video or task."
     },
     "/customTasks/{taskId}": {
       "schema": { "$ref": "#/entities/CustomTask" },

@@ -12,13 +12,16 @@ import {
 } from 'firebase/auth';
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocFromServer,
   getDocs,
+  getDocsFromServer,
   onSnapshot,
   query,
   runTransaction,
+  serverTimestamp,
   setDoc,
   updateDoc,
   where,
@@ -39,7 +42,7 @@ import {
   OperationType,
   testConnection,
 } from '../lib/firebase';
-import { uploadPersistentDataUrl } from './storageService';
+import { uploadPersistentDataUrl, uploadPersistentVideo } from './storageService';
 import type {
   AdminPromotion,
   AirtimeRequest,
@@ -59,6 +62,7 @@ import type {
   TransactionRecord,
   UsdtRequest,
   UserInvestment,
+  VideoWatchSessionRecord,
   WalletAddressRecord,
   WithdrawalRequest,
 } from '../types/finance';
@@ -98,6 +102,7 @@ export interface MemberWorkspaceSnapshot {
   usdtRequests: UsdtRequest[];
   transactions: TransactionRecord[];
   notifications: PlatformNotification[];
+  videoWatchSessions: VideoWatchSessionRecord[];
 }
 
 export interface AdminWorkspaceSnapshot {
@@ -156,7 +161,7 @@ function omitUndefined<T extends object>(obj: T): T {
 }
 
 function sortDesc<T>(items: T[], getDate: (item: T) => string): T[] {
-  return [...items].sort((a, b) => Date.parse(getDate(b)) - Date.parse(getDate(a)));
+  return [...items].sort((a, b) => (Date.parse(getDate(b)) || 0) - (Date.parse(getDate(a)) || 0));
 }
 
 function mergeById<T extends { id: string }>(a: T[], b: T[]): T[] {
@@ -237,17 +242,121 @@ function getPasswordResetActionCodeSettings(): ActionCodeSettings | undefined {
 
 function isSafeHttpUrl(url: string): boolean {
   const trimmed = url.trim();
-  return /^https?:\/\/.+/i.test(trimmed) && trimmed.length <= 500;
+  return /^https?:\/\/.+/i.test(trimmed) && trimmed.length <= 2000;
 }
 
 function isSafeMediaOrHttpUrl(url: string): boolean {
   const trimmed = url.trim();
   if (!trimmed || trimmed.length > 500000) return false;
   return (
-    /^https?:\/\/.+/i.test(trimmed) ||
+    (/^https?:\/\/.+/i.test(trimmed) && trimmed.length <= 2000) ||
     /^data:video\/.+/.test(trimmed) ||
-    /^data:image\/.+/.test(trimmed)
+    /^data:image\/.+/.test(trimmed) ||
+    /^efinance-video:\/\/[a-zA-Z0-9_-]+$/.test(trimmed)
   );
+}
+
+function coerceIsoTimestamp(value: unknown, fallback = ''): string {
+  if (typeof value === 'string') return value;
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    'toDate' in value &&
+    typeof (value as { toDate: unknown }).toDate === 'function'
+  ) {
+    try {
+      return ((value as { toDate: () => Date }).toDate()).toISOString();
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
+/**
+ * Pure in-memory read-only normalizer so existing Firestore user documents with
+ * legacy, partial, or Timestamp-based fields always render safely in Admin
+ * without modifying or overwriting any stored document.
+ */
+function normalizeUserFromDoc(docId: string, raw: Record<string, unknown>): RegisteredUser {
+  const rawEdu =
+    typeof raw.education === 'object' && raw.education !== null
+      ? (raw.education as Partial<RegisteredUser['education']>)
+      : {};
+  const rawRes =
+    typeof raw.residence === 'object' && raw.residence !== null
+      ? (raw.residence as Partial<RegisteredUser['residence']>)
+      : {};
+
+  const statusVal = String(raw.accountStatus ?? 'pending_approval');
+  const accountStatus: RegisteredUser['accountStatus'] =
+    statusVal === 'pending_approval' ||
+    statusVal === 'awaiting_payment' ||
+    statusVal === 'payment_submitted' ||
+    statusVal === 'active' ||
+    statusVal === 'suspended'
+      ? statusVal
+      : 'pending_approval';
+
+  const kycVal = String(raw.kycStatus ?? 'not_submitted');
+  const kycStatus: RegisteredUser['kycStatus'] =
+    kycVal === 'not_submitted' ||
+    kycVal === 'pending' ||
+    kycVal === 'approved' ||
+    kycVal === 'rejected'
+      ? kycVal
+      : 'not_submitted';
+
+  const genderVal = String(raw.gender ?? 'Other');
+  const gender: RegisteredUser['gender'] =
+    genderVal === 'Male' || genderVal === 'Female' || genderVal === 'Other' ? genderVal : 'Other';
+
+  const eduTypeVal = String(rawEdu.type ?? 'University');
+  const eduType: RegisteredUser['education']['type'] =
+    eduTypeVal === 'A-Level' ? 'A-Level' : 'University';
+
+  return {
+    ...(raw as Partial<RegisteredUser>),
+    id: typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : docId,
+    firstName: typeof raw.firstName === 'string' ? raw.firstName : '',
+    secondName: typeof raw.secondName === 'string' ? raw.secondName : '',
+    email: typeof raw.email === 'string' ? raw.email : '',
+    phone: typeof raw.phone === 'string' ? raw.phone : '',
+    gender,
+    dateOfBirth: typeof raw.dateOfBirth === 'string' ? raw.dateOfBirth : '',
+    idNumber: typeof raw.idNumber === 'string' ? raw.idNumber : '',
+    photoDataUrl: typeof raw.photoDataUrl === 'string' ? raw.photoDataUrl : '',
+    education: {
+      type: eduType,
+      institutionName: typeof rawEdu.institutionName === 'string' ? rawEdu.institutionName : '',
+      levelOrClass: typeof rawEdu.levelOrClass === 'string' ? rawEdu.levelOrClass : '',
+      facultyOrCombination:
+        typeof rawEdu.facultyOrCombination === 'string' ? rawEdu.facultyOrCombination : '',
+    },
+    residence: {
+      placeOfBirth: typeof rawRes.placeOfBirth === 'string' ? rawRes.placeOfBirth : '',
+      province: typeof rawRes.province === 'string' ? rawRes.province : undefined,
+      akarere: typeof rawRes.akarere === 'string' ? rawRes.akarere : undefined,
+      umurenge: typeof rawRes.umurenge === 'string' ? rawRes.umurenge : undefined,
+      akagari: typeof rawRes.akagari === 'string' ? rawRes.akagari : undefined,
+      umudugudu: typeof rawRes.umudugudu === 'string' ? rawRes.umudugudu : undefined,
+    },
+    accountNumber: typeof raw.accountNumber === 'string' ? raw.accountNumber : docId,
+    referralCode: typeof raw.referralCode === 'string' ? raw.referralCode : '',
+    spinCredits: Number(raw.spinCredits) || 0,
+    hasCompletedFirstWithdrawal: Boolean(raw.hasCompletedFirstWithdrawal),
+    accountStatus,
+    walletBalanceRwf: Number(raw.walletBalanceRwf) || 0,
+    bonusBalanceRwf: Number(raw.bonusBalanceRwf) || 0,
+    savingsBalanceRwf: Number(raw.savingsBalanceRwf) || 0,
+    walletBalanceUsd: Number(raw.walletBalanceUsd) || 0,
+    usdtBalance: Number(raw.usdtBalance) || 0,
+    usdtSavingsBalance: Number(raw.usdtSavingsBalance) || 0,
+    lastCheckInAt: raw.lastCheckInAt ? coerceIsoTimestamp(raw.lastCheckInAt, '') || null : null,
+    checkInStreak: Number(raw.checkInStreak) || 0,
+    kycStatus,
+    createdAt: coerceIsoTimestamp(raw.createdAt, ''),
+  };
 }
 
 async function getCurrentSettings(): Promise<SystemSettings> {
@@ -366,10 +475,100 @@ export const firestoreService = {
   getMemberProfileByUid: async (uid: string): Promise<RegisteredUser | null> => {
     try {
       const serverSnap = await getDocFromServer(doc(db, 'users', uid));
-      return serverSnap.exists() ? (serverSnap.data() as RegisteredUser) : null;
+      return serverSnap.exists()
+        ? normalizeUserFromDoc(serverSnap.id, serverSnap.data() as Record<string, unknown>)
+        : null;
     } catch {
       const cachedSnap = await getDoc(doc(db, 'users', uid));
-      return cachedSnap.exists() ? (cachedSnap.data() as RegisteredUser) : null;
+      return cachedSnap.exists()
+        ? normalizeUserFromDoc(cachedSnap.id, cachedSnap.data() as Record<string, unknown>)
+        : null;
+    }
+  },
+
+  fetchAllUsersFromServer: async (): Promise<RegisteredUser[]> => {
+    try {
+      const serverSnap = await getDocsFromServer(collection(db, 'users'));
+      return sortDesc(
+        serverSnap.docs.map((d) => normalizeUserFromDoc(d.id, d.data() as Record<string, unknown>)),
+        (u) => u.createdAt,
+      );
+    } catch (err) {
+      handleFirestoreError(err, OperationType.LIST, 'users');
+      return [];
+    }
+  },
+
+  fetchAdminMergedUsers: async (authToken: string): Promise<{
+    authLookupAvailable: boolean;
+    reason?: string;
+    totalAuthUsers?: number;
+    authUsers: Array<{
+      uid: string;
+      authExists: boolean;
+      firestoreExists: boolean;
+      email: string;
+      displayName: string;
+      phone: string;
+      emailVerified: boolean;
+      disabled: boolean;
+      authCreatedAt: string;
+      lastSignInAt: string;
+      profile: RegisteredUser | null;
+    }>;
+  }> => {
+    try {
+      const resp = await fetch('/api/admin/users', {
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
+      });
+      if (!resp.ok) {
+        return {
+          authLookupAvailable: false,
+          reason: `Server Auth lookup returned HTTP ${resp.status}.`,
+          authUsers: [],
+        };
+      }
+      const data = (await resp.json()) as {
+        authLookupAvailable?: boolean;
+        reason?: string;
+        totalAuthUsers?: number;
+        users?: Array<{
+          uid: string;
+          authExists: boolean;
+          firestoreExists: boolean;
+          email: string;
+          displayName: string;
+          phone: string;
+          emailVerified: boolean;
+          disabled: boolean;
+          authCreatedAt: string;
+          lastSignInAt: string;
+          profile: Record<string, unknown> | null;
+        }>;
+      };
+      if (!data.authLookupAvailable || !Array.isArray(data.users)) {
+        return {
+          authLookupAvailable: false,
+          reason: data.reason,
+          authUsers: [],
+        };
+      }
+      return {
+        authLookupAvailable: true,
+        totalAuthUsers: data.totalAuthUsers,
+        authUsers: data.users.map((entry) => ({
+          ...entry,
+          profile: entry.profile ? normalizeUserFromDoc(entry.uid, entry.profile) : null,
+        })),
+      };
+    } catch {
+      return {
+        authLookupAvailable: false,
+        reason: 'Could not reach server admin user directory.',
+        authUsers: [],
+      };
     }
   },
 
@@ -914,6 +1113,7 @@ export const firestoreService = {
       usdtRequests: [],
       transactions: [],
       notifications: [],
+      videoWatchSessions: [],
     };
 
     let activeVideos: ShortVideoCampaign[] = [];
@@ -1085,7 +1285,9 @@ export const firestoreService = {
       onSnapshot(
         doc(db, 'users', uid),
         (snap) => {
-          state.user = snap.exists() ? (snap.data() as RegisteredUser) : null;
+          state.user = snap.exists()
+            ? normalizeUserFromDoc(snap.id, snap.data() as Record<string, unknown>)
+            : null;
           state.userDocLoaded = true;
           emit();
         },
@@ -1287,6 +1489,14 @@ export const firestoreService = {
         },
         fail('notifications'),
       ),
+      onSnapshot(
+        query(collection(db, 'videoWatchSessions'), where('userId', '==', uid)),
+        (snap) => {
+          state.videoWatchSessions = snap.docs.map((d) => d.data() as VideoWatchSessionRecord);
+          emit();
+        },
+        () => {},
+      ),
     ];
 
     return () => {
@@ -1346,7 +1556,7 @@ export const firestoreService = {
         collection(db, 'users'),
         (snap) => {
           state.users = sortDesc(
-            snap.docs.map((d) => d.data() as RegisteredUser),
+            snap.docs.map((d) => normalizeUserFromDoc(d.id, d.data() as Record<string, unknown>)),
             (u) => u.createdAt,
           );
           emit();
@@ -2073,12 +2283,264 @@ export const firestoreService = {
     });
   },
 
-  watchVideoComplete: async (uid: string, campaignId: string): Promise<void> => {
+  startWatchSession: async (params: {
+    uid: string;
+    targetType: 'video' | 'task';
+    targetId: string;
+    requiredSeconds: number;
+    authToken: string;
+  }): Promise<{
+    sessionId: string;
+    sessionToken: string;
+    requiredSeconds: number;
+  }> => {
+    const resp = await fetch('/api/video-sessions/start', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${params.authToken}`,
+      },
+      body: JSON.stringify({
+        targetType: params.targetType,
+        targetId: params.targetId,
+        requiredSeconds: params.requiredSeconds,
+      }),
+    });
+    const body = (await resp.json().catch(() => ({}))) as {
+      error?: string;
+      sessionId?: string;
+      sessionToken?: string;
+      startedAtMs?: number;
+      requiredSeconds?: number;
+    };
+    if (!resp.ok || !body.sessionId || !body.sessionToken) {
+      throw new Error(body.error || 'Unable to start verified video watch session.');
+    }
+
+    const sessionRef = doc(db, 'videoWatchSessions', body.sessionId);
+    const existingSnap = await getDoc(sessionRef).catch(() => null);
+    if (existingSnap?.exists()) {
+      const existingData = existingSnap.data() as Partial<VideoWatchSessionRecord>;
+      if (existingData.status === 'claimed') {
+        throw new Error('You have already claimed the reward for this video.');
+      }
+      // Reset any incomplete / previous session cleanly so refreshes never leave stale partial progress
+      await deleteDoc(sessionRef);
+    }
+
+    const startedAtMs = Math.min(body.startedAtMs ?? Date.now(), Date.now());
+    const requiredSeconds = body.requiredSeconds ?? Math.max(5, Math.min(600, params.requiredSeconds));
+    await setDoc(sessionRef, {
+      id: body.sessionId,
+      userId: params.uid,
+      targetType: params.targetType,
+      targetId: params.targetId,
+      requiredSeconds,
+      accumulatedSeconds: 0,
+      heartbeatCount: 0,
+      status: 'watching',
+      startedAtMs,
+      lastHeartbeatAtMs: startedAtMs,
+      serverStartedAt: serverTimestamp(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    return {
+      sessionId: body.sessionId,
+      sessionToken: body.sessionToken,
+      requiredSeconds,
+    };
+  },
+
+  heartbeatWatchSession: async (params: {
+    sessionId: string;
+    sessionToken: string;
+    isPlaying: boolean;
+    isVisible: boolean;
+    authToken: string;
+    lastFirestoreSyncSec: number;
+  }): Promise<{
+    accumulatedSeconds: number;
+    requiredSeconds: number;
+    completed: boolean;
+    syncedSec: number;
+  }> => {
+    const resp = await fetch('/api/video-sessions/heartbeat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${params.authToken}`,
+      },
+      body: JSON.stringify({
+        sessionToken: params.sessionToken,
+        isPlaying: params.isPlaying,
+        isVisible: params.isVisible,
+      }),
+    });
+    const body = (await resp.json().catch(() => ({}))) as {
+      error?: string;
+      accumulatedSeconds?: number;
+      requiredSeconds?: number;
+      completed?: boolean;
+    };
+    if (!resp.ok) {
+      throw new Error(body.error || 'Watch session heartbeat failed.');
+    }
+
+    const acc = Number(body.accumulatedSeconds ?? 0);
+    const required = Number(body.requiredSeconds ?? 15);
+    let syncedSec = params.lastFirestoreSyncSec;
+
+    // Keep Firestore accumulatedSeconds within rule delta (+10 max per update)
+    if (params.isPlaying && params.isVisible && acc - params.lastFirestoreSyncSec >= 2) {
+      const nextSyncVal = Math.min(acc, params.lastFirestoreSyncSec + 9);
+      await updateDoc(doc(db, 'videoWatchSessions', params.sessionId), {
+        accumulatedSeconds: Number(nextSyncVal.toFixed(2)),
+        heartbeatCount: Math.max(1, Math.round(nextSyncVal)),
+        lastHeartbeatAtMs: Date.now(),
+        updatedAt: new Date().toISOString(),
+      }).catch(() => {});
+      syncedSec = nextSyncVal;
+    }
+
+    return {
+      accumulatedSeconds: acc,
+      requiredSeconds: required,
+      completed: Boolean(body.completed),
+      syncedSec,
+    };
+  },
+
+  completeWatchSession: async (params: {
+    sessionId: string;
+    sessionToken: string;
+    authToken: string;
+  }): Promise<{ verificationSignature: string; requiredSeconds: number }> => {
+    const resp = await fetch('/api/video-sessions/complete', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${params.authToken}`,
+      },
+      body: JSON.stringify({ sessionToken: params.sessionToken }),
+    });
+    const body = (await resp.json().catch(() => ({}))) as {
+      error?: string;
+      verified?: boolean;
+      verificationSignature?: string;
+      accumulatedSeconds?: number;
+      requiredSeconds?: number;
+    };
+    if (!resp.ok || !body.verified || !body.verificationSignature) {
+      throw new Error(body.error || 'Video watch completion verification failed.');
+    }
+
+    const reqSec = Number(body.requiredSeconds ?? 15);
+    const accSec = Math.max(reqSec, Number(body.accumulatedSeconds ?? reqSec));
+    const applyComplete = async () => {
+      await updateDoc(doc(db, 'videoWatchSessions', params.sessionId), {
+        status: 'completed',
+        accumulatedSeconds: accSec,
+        lastHeartbeatAtMs: Date.now(),
+        completedAtMs: Date.now(),
+        verificationSignature: body.verificationSignature,
+        updatedAt: new Date().toISOString(),
+      });
+    };
+
+    try {
+      await applyComplete();
+    } catch {
+      // Allow up to 1.5s NTP/Firestore serverTimestamp boundary alignment and retry once
+      await new Promise((r) => setTimeout(r, 1500));
+      await applyComplete();
+    }
+
+    return {
+      verificationSignature: body.verificationSignature,
+      requiredSeconds: reqSec,
+    };
+  },
+
+  watchVideoComplete: async (
+    uid: string,
+    campaignId: string,
+    verificationSignature?: string,
+    authToken?: string,
+  ): Promise<void> => {
+    const sessionId = `${uid}__video_${campaignId}`;
+    let sig = verificationSignature?.trim() || '';
+
+    if (!sig) {
+      const sessSnap = await getDoc(doc(db, 'videoWatchSessions', sessionId));
+      if (sessSnap.exists()) {
+        const sData = sessSnap.data() as VideoWatchSessionRecord;
+        if (sData.status === 'completed' && sData.verificationSignature) {
+          sig = sData.verificationSignature;
+        }
+      }
+    }
+
+    if (!sig) {
+      throw new Error('Please watch the video inside the in-app player for the full required duration before claiming.');
+    }
+
+    let token = authToken || '';
+    if (!token && auth.currentUser) {
+      token = await auth.currentUser.getIdToken();
+    }
+    if (!token) {
+      throw new Error('Authentication session expired. Please sign in again.');
+    }
+
+    const claimResp = await fetch('/api/video-sessions/claim', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        targetType: 'video',
+        targetId: campaignId,
+        verificationSignature: sig,
+      }),
+    });
+    const claimBody = (await claimResp.json().catch(() => ({}))) as {
+      error?: string;
+      serverVerified?: boolean;
+      creditedByServer?: boolean;
+      useClientAtomicTx?: boolean;
+    };
+
+    if (!claimResp.ok || !claimBody.serverVerified) {
+      throw new Error(claimBody.error || 'Server rejected unverified video claim.');
+    }
+
+    if (claimBody.creditedByServer) {
+      return;
+    }
+
     await runTransaction(db, async (tx) => {
       const vidRef = doc(db, 'videoCampaigns', campaignId);
       const userRef = doc(db, 'users', uid);
-      const [vidSnap, userSnap] = await Promise.all([tx.get(vidRef), tx.get(userRef)]);
+      const sessionRef = doc(db, 'videoWatchSessions', sessionId);
+      const [vidSnap, userSnap, sessSnap] = await Promise.all([
+        tx.get(vidRef),
+        tx.get(userRef),
+        tx.get(sessionRef),
+      ]);
       if (!vidSnap.exists() || !userSnap.exists()) throw new Error('Video campaign not found.');
+      if (!sessSnap.exists()) {
+        throw new Error('Watch verification session not found. Please watch the video completely.');
+      }
+      const sess = sessSnap.data() as VideoWatchSessionRecord;
+      if (sess.status === 'claimed') {
+        throw new Error('You have already claimed this video reward.');
+      }
+      if (sess.status !== 'completed' && sess.accumulatedSeconds < sess.requiredSeconds) {
+        throw new Error('Required watch duration is not yet completed.');
+      }
+
       const camp = vidSnap.data() as ShortVideoCampaign;
       const user = userSnap.data() as RegisteredUser;
 
@@ -2092,6 +2554,11 @@ export const firestoreService = {
       const updatedWatchers = [...camp.watchedByUserIds, uid];
       const completed = updatedWatchers.length >= camp.targetViewers;
 
+      tx.update(sessionRef, {
+        status: 'claimed',
+        claimedAtMs: Date.now(),
+        updatedAt: nowIso,
+      });
       tx.update(vidRef, {
         watchedByUserIds: updatedWatchers,
         status: completed ? 'completed' : 'active',
@@ -2124,42 +2591,53 @@ export const firestoreService = {
       title: string;
       description: string;
       videoUrl: string;
+      videoFile?: File | null;
+      requiredWatchSeconds?: number;
       rewardPerViewRwf: number;
       targetViewers: number;
       paymentRef: string;
+      onUploadProgress?: (percent: number, stage: string) => void;
     },
   ): Promise<void> => {
     const userSnap = await getDoc(doc(db, 'users', uid));
     if (!userSnap.exists()) throw new Error('User not found.');
-    const user = userSnap.data() as RegisteredUser;
+    const user = normalizeUserFromDoc(userSnap.id, userSnap.data() as Record<string, unknown>);
     const settings = await getCurrentSettings();
 
     const title = payload.title.trim();
     const description = payload.description.trim();
     const rawVideoUrl = payload.videoUrl.trim();
+    const requiredWatchSeconds = Math.max(
+      5,
+      Math.min(600, Math.round(Number(payload.requiredWatchSeconds) || 15)),
+    );
     const rewardPerViewRwf = Math.round(Number(payload.rewardPerViewRwf));
     const targetViewers = Math.round(Number(payload.targetViewers));
     const paymentRef = payload.paymentRef.trim();
 
-    if (!title || !isSafeMediaOrHttpUrl(rawVideoUrl) || targetViewers < 1 || paymentRef.length < 3) {
-      throw new Error('Valid video details, safe video URL, and payment reference required.');
+    if (!title || targetViewers < 1 || paymentRef.length < 3) {
+      throw new Error('Valid campaign title, target viewers, and payment reference required.');
+    }
+    if (!payload.videoFile && !isSafeMediaOrHttpUrl(rawVideoUrl)) {
+      throw new Error('Upload a valid short video file or paste a valid https:// video URL.');
     }
     if (rewardPerViewRwf < settings.minVideoRewardRwf) {
       throw new Error(`Minimum reward per view is ${settings.minVideoRewardRwf} RWF.`);
     }
 
-    const uploadedVideo = await uploadPersistentDataUrl({
+    const vidId = generateSafeId('vid');
+    const uploadedVideo = await uploadPersistentVideo({
       ownerUid: uid,
-      folder: 'campaigns',
-      filePrefix: 'video',
-      dataUrlOrHttpUrl: rawVideoUrl,
+      videoId: vidId,
+      file: payload.videoFile,
+      videoUrl: rawVideoUrl,
+      onProgress: payload.onUploadProgress,
     });
     const videoUrl = uploadedVideo.url;
 
     const nowIso = new Date().toISOString();
     const totalBudgetRwf = rewardPerViewRwf * targetViewers;
     const paymentCode = `*182*8*1*${settings.momoPayCode}*${totalBudgetRwf}#`;
-    const vidId = generateSafeId('vid');
 
     const batch = writeBatch(db);
     batch.set(doc(db, 'videoCampaigns', vidId), {
@@ -2169,6 +2647,7 @@ export const firestoreService = {
       title,
       description,
       videoUrl,
+      requiredWatchSeconds,
       rewardPerViewRwf,
       targetViewers,
       totalBudgetRwf,
@@ -2197,7 +2676,7 @@ export const firestoreService = {
       id: notifId,
       recipientId: 'admin',
       title: 'Video Campaign Pending Approval',
-      message: `${user.firstName} ${user.secondName} uploaded "${title}" (Ref ${paymentRef}).`,
+      message: `${user.firstName} ${user.secondName} uploaded "${title}" (${requiredWatchSeconds}s · Ref ${paymentRef}).`,
       category: 'Video',
       read: false,
       createdAt: nowIso,
@@ -2207,7 +2686,13 @@ export const firestoreService = {
 
   submitTaskProof: async (
     uid: string,
-    payload: { taskId: string; proofText: string; proofUrl?: string },
+    payload: {
+      taskId: string;
+      proofText: string;
+      proofUrl?: string;
+      verificationSignature?: string;
+      authToken?: string;
+    },
   ): Promise<void> => {
     const proofText = payload.proofText.trim();
     const rawUrl = payload.proofUrl?.trim() ?? '';
@@ -2215,27 +2700,81 @@ export const firestoreService = {
     if (proofUrl && !isSafeHttpUrl(proofUrl)) {
       throw new Error('Proof URL must start with http:// or https://.');
     }
-    const [taskSnap, userSnap, existingSubs] = await Promise.all([
+
+    const deterministicSubId = `sub-${payload.taskId}__${uid}`;
+    const sessionId = `${uid}__task_${payload.taskId}`;
+
+    const [taskSnap, userSnap, existingSubs, detSubSnap, sessSnap] = await Promise.all([
       getDoc(doc(db, 'customTasks', payload.taskId)),
       getDoc(doc(db, 'users', uid)),
       getDocs(query(collection(db, 'taskSubmissions'), where('workerId', '==', uid))),
+      getDoc(doc(db, 'taskSubmissions', deterministicSubId)),
+      getDoc(doc(db, 'videoWatchSessions', sessionId)).catch(() => null),
     ]);
+
     if (!taskSnap.exists() || !userSnap.exists() || proofText.length < 3) {
       throw new Error('Active task and completion proof required.');
     }
     const task = taskSnap.data() as CustomTask;
-    const user = userSnap.data() as RegisteredUser;
+    const user = normalizeUserFromDoc(userSnap.id, userSnap.data() as Record<string, unknown>);
     if (task.status !== 'active') throw new Error('This task is no longer active.');
-    const duplicate = existingSubs.docs.some((d) => (d.data() as TaskSubmission).taskId === task.id);
+    if (task.approvedWorkerIds.includes(uid)) {
+      throw new Error('You have already earned the reward for this task.');
+    }
+
+    const duplicate =
+      detSubSnap.exists() || existingSubs.docs.some((d) => (d.data() as TaskSubmission).taskId === task.id);
     if (duplicate) throw new Error('You already submitted proof for this task.');
 
+    // If this task has a required video, enforce server-side + Firestore watch completion first
+    if (task.videoUrl && task.videoUrl.trim().length > 0) {
+      const sessData = sessSnap?.exists() ? (sessSnap.data() as VideoWatchSessionRecord) : null;
+      const sig = payload.verificationSignature?.trim() || sessData?.verificationSignature || '';
+      if (!sessData || (sessData.status !== 'completed' && sessData.status !== 'claimed') || !sig) {
+        throw new Error(
+          `Watch the required task video for ${task.requiredWatchSeconds ?? 15}s inside E-Finance before submitting your claim.`,
+        );
+      }
+
+      let token = payload.authToken || '';
+      if (!token && auth.currentUser) {
+        token = await auth.currentUser.getIdToken();
+      }
+      if (!token) {
+        throw new Error('Sign in session expired. Please refresh or sign in again.');
+      }
+      const claimResp = await fetch('/api/video-sessions/claim', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          targetType: 'task',
+          targetId: task.id,
+          verificationSignature: sig,
+        }),
+      });
+      const claimBody = (await claimResp.json().catch(() => ({}))) as { error?: string; serverVerified?: boolean };
+      if (!claimResp.ok || !claimBody.serverVerified) {
+        throw new Error(claimBody.error || 'Task video watch verification failed on server.');
+      }
+
+      if (sessData.status === 'completed') {
+        await updateDoc(doc(db, 'videoWatchSessions', sessionId), {
+          status: 'claimed',
+          claimedAtMs: Date.now(),
+          updatedAt: new Date().toISOString(),
+        }).catch(() => {});
+      }
+    }
+
     const nowIso = new Date().toISOString();
-    const subId = generateSafeId('sub');
     const batch = writeBatch(db);
     batch.set(
-      doc(db, 'taskSubmissions', subId),
+      doc(db, 'taskSubmissions', deterministicSubId),
       omitUndefined({
-        id: subId,
+        id: deterministicSubId,
         taskId: task.id,
         taskTitle: task.title,
         workerId: uid,
@@ -2265,18 +2804,23 @@ export const firestoreService = {
     payload: {
       title: string;
       requirements: string;
+      videoUrl?: string;
+      videoFile?: File | null;
+      requiredWatchSeconds?: number;
       rewardPerCompletionRwf: number;
       targetCompletions: number;
       paymentRef: string;
+      onUploadProgress?: (percent: number, stage: string) => void;
     },
   ): Promise<void> => {
     const userSnap = await getDoc(doc(db, 'users', uid));
     if (!userSnap.exists()) throw new Error('User not found.');
-    const user = userSnap.data() as RegisteredUser;
+    const user = normalizeUserFromDoc(userSnap.id, userSnap.data() as Record<string, unknown>);
     const settings = await getCurrentSettings();
 
     const title = payload.title.trim();
     const requirements = payload.requirements.trim();
+    const rawVideoUrl = payload.videoUrl?.trim() ?? '';
     const rewardPerCompletionRwf = Math.round(Number(payload.rewardPerCompletionRwf));
     const targetCompletions = Math.round(Number(payload.targetCompletions));
     const paymentRef = payload.paymentRef.trim();
@@ -2284,29 +2828,54 @@ export const firestoreService = {
     if (!title || !requirements || rewardPerCompletionRwf < 20 || targetCompletions < 1 || paymentRef.length < 3) {
       throw new Error('Valid task details and payment reference required.');
     }
+    if (rawVideoUrl && !payload.videoFile && !isSafeMediaOrHttpUrl(rawVideoUrl)) {
+      throw new Error('Task video link must be a valid https:// video URL or uploaded video file.');
+    }
 
     const nowIso = new Date().toISOString();
     const totalBudgetRwf = rewardPerCompletionRwf * targetCompletions;
     const paymentCode = `*182*8*1*${settings.momoPayCode}*${totalBudgetRwf}#`;
     const taskId = generateSafeId('tsk');
 
+    let finalVideoUrl: string | undefined;
+    let requiredWatchSeconds: number | undefined;
+    if (payload.videoFile || rawVideoUrl) {
+      const uploaded = await uploadPersistentVideo({
+        ownerUid: uid,
+        videoId: taskId,
+        file: payload.videoFile,
+        videoUrl: rawVideoUrl,
+        onProgress: payload.onUploadProgress,
+      });
+      finalVideoUrl = uploaded.url;
+      requiredWatchSeconds = Math.max(
+        5,
+        Math.min(600, Math.round(Number(payload.requiredWatchSeconds) || 15)),
+      );
+    }
+
     const batch = writeBatch(db);
-    batch.set(doc(db, 'customTasks', taskId), {
-      id: taskId,
-      creatorId: uid,
-      creatorName: `${user.firstName} ${user.secondName}`,
-      title,
-      requirements,
-      rewardPerCompletionRwf,
-      targetCompletions,
-      totalBudgetRwf,
-      paymentCode,
-      paymentRef,
-      approvedWorkerIds: [],
-      status: 'pending_admin',
-      createdAt: nowIso,
-      updatedAt: nowIso,
-    });
+    batch.set(
+      doc(db, 'customTasks', taskId),
+      omitUndefined({
+        id: taskId,
+        creatorId: uid,
+        creatorName: `${user.firstName} ${user.secondName}`,
+        title,
+        requirements,
+        videoUrl: finalVideoUrl,
+        requiredWatchSeconds,
+        rewardPerCompletionRwf,
+        targetCompletions,
+        totalBudgetRwf,
+        paymentCode,
+        paymentRef,
+        approvedWorkerIds: [],
+        status: 'pending_admin',
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      }),
+    );
     const txRec = buildTransactionRecord({
       idPrefix: 'tx-tsk',
       userId: uid,
@@ -3046,27 +3615,46 @@ export const firestoreService = {
     title: string;
     description: string;
     videoUrl: string;
+    videoFile?: File | null;
+    requiredWatchSeconds?: number;
     rewardPerViewRwf: number;
     targetViewers: number;
+    onUploadProgress?: (percent: number, stage: string) => void;
   }): Promise<void> => {
     const title = payload.title.trim();
     const description = payload.description.trim();
-    const videoUrl = payload.videoUrl.trim();
+    const rawVideoUrl = payload.videoUrl.trim();
+    const requiredWatchSeconds = Math.max(
+      5,
+      Math.min(600, Math.round(Number(payload.requiredWatchSeconds) || 15)),
+    );
     const rewardPerViewRwf = Math.round(Number(payload.rewardPerViewRwf));
     const targetViewers = Math.round(Number(payload.targetViewers));
-    if (!title || !isSafeMediaOrHttpUrl(videoUrl) || rewardPerViewRwf < 1 || targetViewers < 1) {
-      throw new Error('Provide valid title, safe video URL, reward, and target viewers.');
+    if (!title || rewardPerViewRwf < 1 || targetViewers < 1) {
+      throw new Error('Provide valid title, reward per view, and target viewers.');
+    }
+    if (!payload.videoFile && !isSafeMediaOrHttpUrl(rawVideoUrl)) {
+      throw new Error('Upload a valid video file or paste a valid https:// video URL (MP4, YouTube, Vimeo, or Google Drive).');
     }
 
     const nowIso = new Date().toISOString();
     const vidId = generateSafeId('vid');
+    const uploadedVideo = await uploadPersistentVideo({
+      ownerUid: 'admin',
+      videoId: vidId,
+      file: payload.videoFile,
+      videoUrl: rawVideoUrl,
+      onProgress: payload.onUploadProgress,
+    });
+
     await setDoc(doc(db, 'videoCampaigns', vidId), {
       id: vidId,
       creatorId: 'admin',
       creatorName: 'E-Finance Admin',
       title,
       description,
-      videoUrl,
+      videoUrl: uploadedVideo.url,
+      requiredWatchSeconds,
       rewardPerViewRwf,
       targetViewers,
       totalBudgetRwf: rewardPerViewRwf * targetViewers,
@@ -3107,35 +3695,66 @@ export const firestoreService = {
   adminCreateTask: async (payload: {
     title: string;
     requirements: string;
+    videoUrl?: string;
+    videoFile?: File | null;
+    requiredWatchSeconds?: number;
     rewardPerCompletionRwf: number;
     targetCompletions: number;
+    onUploadProgress?: (percent: number, stage: string) => void;
   }): Promise<void> => {
     const title = payload.title.trim();
     const requirements = payload.requirements.trim();
+    const rawVideoUrl = payload.videoUrl?.trim() ?? '';
     const rewardPerCompletionRwf = Math.round(Number(payload.rewardPerCompletionRwf));
     const targetCompletions = Math.round(Number(payload.targetCompletions));
     if (!title || !requirements || rewardPerCompletionRwf < 1 || targetCompletions < 1) {
       throw new Error('Provide valid task title, requirements, reward, and target.');
     }
+    if (rawVideoUrl && !payload.videoFile && !isSafeMediaOrHttpUrl(rawVideoUrl)) {
+      throw new Error('Task video link must be a valid https:// video URL or uploaded video file.');
+    }
 
     const nowIso = new Date().toISOString();
     const taskId = generateSafeId('tsk');
-    await setDoc(doc(db, 'customTasks', taskId), {
-      id: taskId,
-      creatorId: 'admin',
-      creatorName: 'E-Finance Admin',
-      title,
-      requirements,
-      rewardPerCompletionRwf,
-      targetCompletions,
-      totalBudgetRwf: rewardPerCompletionRwf * targetCompletions,
-      paymentCode: 'ADMIN-DIRECT',
-      paymentRef: 'ADMIN-PUBLISHED',
-      approvedWorkerIds: [],
-      status: 'active',
-      createdAt: nowIso,
-      updatedAt: nowIso,
-    });
+
+    let finalVideoUrl: string | undefined;
+    let requiredWatchSeconds: number | undefined;
+    if (payload.videoFile || rawVideoUrl) {
+      const uploaded = await uploadPersistentVideo({
+        ownerUid: 'admin',
+        videoId: taskId,
+        file: payload.videoFile,
+        videoUrl: rawVideoUrl,
+        onProgress: payload.onUploadProgress,
+      });
+      finalVideoUrl = uploaded.url;
+      requiredWatchSeconds = Math.max(
+        5,
+        Math.min(600, Math.round(Number(payload.requiredWatchSeconds) || 15)),
+      );
+    }
+
+    await setDoc(
+      doc(db, 'customTasks', taskId),
+      omitUndefined({
+        id: taskId,
+        creatorId: 'admin',
+        creatorName: 'E-Finance Admin',
+        title,
+        requirements,
+        videoUrl: finalVideoUrl,
+        requiredWatchSeconds,
+        rewardPerCompletionRwf,
+        targetCompletions,
+        totalBudgetRwf: rewardPerCompletionRwf * targetCompletions,
+        paymentCode: 'ADMIN-DIRECT',
+        paymentRef: 'ADMIN-PUBLISHED',
+        approvedWorkerIds: [],
+        status: 'active',
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      }),
+    );
     await syncPublicStatsCounts();
   },
 

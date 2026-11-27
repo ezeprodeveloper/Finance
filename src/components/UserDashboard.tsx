@@ -48,6 +48,7 @@ import {
   UsdtRequest,
   UserInvestment,
   UserPortalSection,
+  VideoWatchSessionRecord,
   WalletAddressRecord,
   WithdrawalRequest,
 } from '../types/finance';
@@ -96,6 +97,8 @@ interface UserDashboardProps {
   fxExchanges: FxExchangeRecord[];
   usdtRequests: UsdtRequest[];
   transactions: TransactionRecord[];
+  videoWatchSessions: VideoWatchSessionRecord[];
+  getAuthToken: () => Promise<string | null>;
   onSubmitActivationPayment: (phone: string, ref: string) => void;
   onDailyCheckIn: () => void;
   onSubmitKyc: (data: RwandaKycData) => void;
@@ -157,23 +160,35 @@ interface UserDashboardProps {
     netAmountRwf: number;
     isFirstBonusWithdrawal: boolean;
   }) => void;
-  onWatchVideoComplete: (campaignId: string) => void;
+  onWatchVideoComplete: (campaignId: string, verificationSignature?: string) => Promise<string | null>;
   onCreateVideoCampaign: (payload: {
     title: string;
     description: string;
     videoUrl: string;
+    videoFile?: File | null;
+    requiredWatchSeconds: number;
     rewardPerViewRwf: number;
     targetViewers: number;
     paymentRef: string;
-  }) => void;
-  onSubmitTaskProof: (payload: { taskId: string; proofText: string; proofUrl?: string }) => void;
+    onUploadProgress?: (percent: number, stage: string) => void;
+  }) => Promise<string | null>;
+  onSubmitTaskProof: (payload: {
+    taskId: string;
+    proofText: string;
+    proofUrl?: string;
+    verificationSignature?: string;
+  }) => Promise<string | null>;
   onCreateCustomTask: (payload: {
     title: string;
     requirements: string;
+    videoUrl?: string;
+    videoFile?: File | null;
+    requiredWatchSeconds?: number;
     rewardPerCompletionRwf: number;
     targetCompletions: number;
     paymentRef: string;
-  }) => void;
+    onUploadProgress?: (percent: number, stage: string) => void;
+  }) => Promise<string | null>;
   notifications?: PlatformNotification[];
   onMarkNotificationRead?: (id: string) => void;
   onSignOut: () => void;
@@ -959,6 +974,8 @@ export function UserDashboard(props: UserDashboardProps) {
               user={user}
               settings={settings}
               campaigns={props.videoCampaigns}
+              videoWatchSessions={props.videoWatchSessions}
+              getAuthToken={props.getAuthToken}
               onWatchComplete={props.onWatchVideoComplete}
               onCreateVideoCampaign={props.onCreateVideoCampaign}
             />
@@ -970,6 +987,8 @@ export function UserDashboard(props: UserDashboardProps) {
               settings={settings}
               tasks={props.customTasks}
               submissions={props.taskSubmissions}
+              videoWatchSessions={props.videoWatchSessions}
+              getAuthToken={props.getAuthToken}
               onSubmitTaskProof={props.onSubmitTaskProof}
               onCreateCustomTask={props.onCreateCustomTask}
             />

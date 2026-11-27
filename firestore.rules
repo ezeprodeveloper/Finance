@@ -47,7 +47,7 @@ service cloud.firestore {
     }
 
     function isSafeUrl(val) {
-      return val is string && val.size() <= 500 && (val.matches('^https://.*') || val.matches('^http://.*'));
+      return val is string && val.size() <= 2000 && (val.matches('^https://.*') || val.matches('^http://.*'));
     }
 
     function isSafeMediaOrUrl(val) {
@@ -55,7 +55,8 @@ service cloud.firestore {
         val.matches('^https://.*') ||
         val.matches('^http://.*') ||
         val.matches('^data:video/.*') ||
-        val.matches('^data:image/.*')
+        val.matches('^data:image/.*') ||
+        val.matches('^efinance-video://[a-zA-Z0-9_\\-]+$')
       );
     }
 
@@ -318,8 +319,8 @@ service cloud.firestore {
         ]) &&
         data.keys().hasOnly([
           'id', 'creatorId', 'creatorName', 'title', 'description', 'videoUrl',
-          'rewardPerViewRwf', 'targetViewers', 'totalBudgetRwf', 'paymentCode', 'paymentRef',
-          'watchedByUserIds', 'status', 'createdAt', 'updatedAt'
+          'requiredWatchSeconds', 'rewardPerViewRwf', 'targetViewers', 'totalBudgetRwf',
+          'paymentCode', 'paymentRef', 'watchedByUserIds', 'status', 'createdAt', 'updatedAt'
         ]) &&
         isValidId(data.id) &&
         isValidId(data.creatorId) &&
@@ -327,6 +328,7 @@ service cloud.firestore {
         data.title is string && data.title.size() >= 2 && data.title.size() <= 200 &&
         data.description is string && data.description.size() <= 1000 &&
         isSafeMediaOrUrl(data.videoUrl) &&
+        (!('requiredWatchSeconds' in data) || data.requiredWatchSeconds == null || (data.requiredWatchSeconds is number && data.requiredWatchSeconds >= 5 && data.requiredWatchSeconds <= 600)) &&
         data.rewardPerViewRwf is number && data.rewardPerViewRwf >= 1 &&
         data.targetViewers is number && data.targetViewers >= 1 && data.targetViewers <= 5000 &&
         data.totalBudgetRwf is number && data.totalBudgetRwf >= 1 &&
@@ -338,6 +340,24 @@ service cloud.firestore {
         (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
     }
 
+    function isValidVideoChunk(data) {
+      return data.keys().hasAll([
+          'id', 'videoId', 'ownerUid', 'chunkIndex', 'totalChunks', 'contentType', 'data', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'videoId', 'ownerUid', 'chunkIndex', 'totalChunks', 'contentType', 'data', 'createdAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.videoId) &&
+        isValidId(data.ownerUid) &&
+        data.chunkIndex is number && data.chunkIndex >= 0 && data.chunkIndex < 30 &&
+        data.totalChunks is number && data.totalChunks >= 1 && data.totalChunks <= 30 &&
+        data.chunkIndex < data.totalChunks &&
+        data.contentType is string && data.contentType.size() >= 3 && data.contentType.size() <= 100 &&
+        data.data is string && data.data.size() >= 1 && data.data.size() <= 400000 &&
+        data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
     function isValidTask(data) {
       return data.keys().hasAll([
           'id', 'creatorId', 'creatorName', 'title', 'requirements',
@@ -345,7 +365,7 @@ service cloud.firestore {
           'paymentCode', 'paymentRef', 'approvedWorkerIds', 'status', 'createdAt'
         ]) &&
         data.keys().hasOnly([
-          'id', 'creatorId', 'creatorName', 'title', 'requirements',
+          'id', 'creatorId', 'creatorName', 'title', 'requirements', 'videoUrl', 'requiredWatchSeconds',
           'rewardPerCompletionRwf', 'targetCompletions', 'totalBudgetRwf',
           'paymentCode', 'paymentRef', 'approvedWorkerIds', 'status', 'createdAt', 'updatedAt'
         ]) &&
@@ -354,6 +374,8 @@ service cloud.firestore {
         data.creatorName is string && data.creatorName.size() >= 2 && data.creatorName.size() <= 200 &&
         data.title is string && data.title.size() >= 2 && data.title.size() <= 200 &&
         data.requirements is string && data.requirements.size() >= 2 && data.requirements.size() <= 2000 &&
+        (!('videoUrl' in data) || data.videoUrl == null || data.videoUrl == '' || isSafeMediaOrUrl(data.videoUrl)) &&
+        (!('requiredWatchSeconds' in data) || data.requiredWatchSeconds == null || (data.requiredWatchSeconds is number && data.requiredWatchSeconds >= 5 && data.requiredWatchSeconds <= 600)) &&
         data.rewardPerCompletionRwf is number && data.rewardPerCompletionRwf >= 1 &&
         data.targetCompletions is number && data.targetCompletions >= 1 && data.targetCompletions <= 5000 &&
         data.totalBudgetRwf is number && data.totalBudgetRwf >= 1 &&
@@ -363,6 +385,35 @@ service cloud.firestore {
         data.status in ['pending_admin', 'active', 'completed', 'rejected'] &&
         data.createdAt is string && data.createdAt.size() <= 64 &&
         (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidWatchSession(data) {
+      return data.keys().hasAll([
+          'id', 'userId', 'targetType', 'targetId', 'requiredSeconds',
+          'accumulatedSeconds', 'heartbeatCount', 'status', 'startedAtMs',
+          'lastHeartbeatAtMs', 'serverStartedAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'userId', 'targetType', 'targetId', 'requiredSeconds',
+          'accumulatedSeconds', 'heartbeatCount', 'status', 'startedAtMs',
+          'lastHeartbeatAtMs', 'completedAtMs', 'claimedAtMs',
+          'verificationSignature', 'serverStartedAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.userId) &&
+        data.targetType in ['video', 'task'] &&
+        isValidId(data.targetId) &&
+        data.requiredSeconds is number && data.requiredSeconds >= 5 && data.requiredSeconds <= 600 &&
+        data.accumulatedSeconds is number && data.accumulatedSeconds >= 0 && data.accumulatedSeconds <= 3600 &&
+        data.heartbeatCount is number && data.heartbeatCount >= 0 && data.heartbeatCount <= 5000 &&
+        data.status in ['watching', 'completed', 'claimed'] &&
+        data.startedAtMs is number && data.startedAtMs > 0 &&
+        data.lastHeartbeatAtMs is number && data.lastHeartbeatAtMs >= data.startedAtMs &&
+        (!('completedAtMs' in data) || data.completedAtMs == null || data.completedAtMs is number) &&
+        (!('claimedAtMs' in data) || data.claimedAtMs == null || data.claimedAtMs is number) &&
+        (!('verificationSignature' in data) || data.verificationSignature == null || (data.verificationSignature is string && data.verificationSignature.size() <= 1024)) &&
+        data.serverStartedAt is timestamp &&
+        data.updatedAt is string && data.updatedAt.size() <= 64;
     }
 
     function isValidSubmission(data) {
@@ -866,10 +917,64 @@ service cloud.firestore {
           incoming().rewardPerViewRwf == existing().rewardPerViewRwf &&
           incoming().creatorId == existing().creatorId &&
           incoming().status in ['active', 'completed'] &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['watchedByUserIds', 'status', 'updatedAt'])
+          incoming().diff(existing()).affectedKeys().hasOnly(['watchedByUserIds', 'status', 'updatedAt']) &&
+          existsAfter(/databases/$(database)/documents/videoWatchSessions/$(request.auth.uid + '__video_' + campaignId)) &&
+          getAfter(/databases/$(database)/documents/videoWatchSessions/$(request.auth.uid + '__video_' + campaignId)).data.status == 'claimed'
         )
       );
       allow delete: if isAdmin() && isValidId(campaignId);
+    }
+
+    match /videoChunks/{chunkId} {
+      allow get, list: if isSignedIn();
+      allow create: if isValidId(chunkId) && isSignedIn() && isValidVideoChunk(incoming()) && (
+        incoming().ownerUid == request.auth.uid ||
+        (isAdmin() && incoming().ownerUid == 'admin')
+      );
+      allow update: if false;
+      allow delete: if isAdmin() && isValidId(chunkId);
+    }
+
+    match /videoWatchSessions/{sessionId} {
+      allow get: if isValidId(sessionId) && (isOwner(existing().userId) || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(sessionId) && isOwner(incoming().userId) && isValidWatchSession(incoming()) &&
+        sessionId == (request.auth.uid + '__' + incoming().targetType + '_' + incoming().targetId) &&
+        incoming().status == 'watching' &&
+        incoming().accumulatedSeconds == 0 &&
+        incoming().heartbeatCount == 0 &&
+        incoming().serverStartedAt == request.time;
+      allow update: if isValidId(sessionId) && isValidWatchSession(incoming()) && (
+        isAdmin() || (
+          isOwner(existing().userId) &&
+          existing().status != 'claimed' &&
+          incoming().id == existing().id &&
+          incoming().userId == existing().userId &&
+          incoming().targetType == existing().targetType &&
+          incoming().targetId == existing().targetId &&
+          incoming().requiredSeconds == existing().requiredSeconds &&
+          incoming().serverStartedAt == existing().serverStartedAt &&
+          (
+            (
+              incoming().status == 'watching' &&
+              incoming().accumulatedSeconds >= existing().accumulatedSeconds &&
+              incoming().accumulatedSeconds <= existing().accumulatedSeconds + 10
+            ) || (
+              incoming().status == 'completed' &&
+              incoming().accumulatedSeconds >= existing().requiredSeconds &&
+              request.time >= existing().serverStartedAt + duration.value(existing().requiredSeconds - 1, 's')
+            ) || (
+              incoming().status == 'claimed' && (
+                existing().status == 'completed' || (
+                  incoming().accumulatedSeconds >= existing().requiredSeconds &&
+                  request.time >= existing().serverStartedAt + duration.value(existing().requiredSeconds - 1, 's')
+                )
+              )
+            )
+          )
+        )
+      );
+      allow delete: if isAdmin() || (isValidId(sessionId) && isOwner(existing().userId) && existing().status != 'claimed');
     }
 
     match /customTasks/{taskId} {
@@ -888,7 +993,16 @@ service cloud.firestore {
       allow list: if isSignedIn() && (existing().workerId == request.auth.uid || isAdmin());
       allow create: if isValidId(submissionId) && isOwner(incoming().workerId) && isValidSubmission(incoming()) &&
         incoming().status == 'pending_admin' &&
-        get(/databases/$(database)/documents/customTasks/$(incoming().taskId)).data.status == 'active';
+        get(/databases/$(database)/documents/customTasks/$(incoming().taskId)).data.status == 'active' &&
+        (
+          !('videoUrl' in get(/databases/$(database)/documents/customTasks/$(incoming().taskId)).data) ||
+          get(/databases/$(database)/documents/customTasks/$(incoming().taskId)).data.videoUrl == null ||
+          get(/databases/$(database)/documents/customTasks/$(incoming().taskId)).data.videoUrl == '' ||
+          (
+            exists(/databases/$(database)/documents/videoWatchSessions/$(request.auth.uid + '__task_' + incoming().taskId)) &&
+            get(/databases/$(database)/documents/videoWatchSessions/$(request.auth.uid + '__task_' + incoming().taskId)).data.status in ['completed', 'claimed']
+          )
+        );
       allow update: if isAdmin() && isValidId(submissionId) && isValidSubmission(incoming());
       allow delete: if isAdmin() && isValidId(submissionId);
     }

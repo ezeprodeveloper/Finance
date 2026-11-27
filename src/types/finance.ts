@@ -45,7 +45,7 @@ export interface RwandaKycData {
 }
 
 export interface StoredMediaMetadata {
-  backend: 'firebase_storage' | 'firestore_inline';
+  backend: 'firebase_storage' | 'firestore_inline' | 'firestore_chunked';
   storagePath?: string;
   contentType: string;
   sizeBytes: number;
@@ -170,6 +170,7 @@ export interface ShortVideoCampaign {
   title: string;
   description: string;
   videoUrl: string;
+  requiredWatchSeconds?: number;
   rewardPerViewRwf: number;
   targetViewers: number;
   totalBudgetRwf: number;
@@ -186,6 +187,8 @@ export interface CustomTask {
   creatorName: string;
   title: string;
   requirements: string;
+  videoUrl?: string;
+  requiredWatchSeconds?: number;
   rewardPerCompletionRwf: number;
   targetCompletions: number;
   totalBudgetRwf: number;
@@ -194,6 +197,24 @@ export interface CustomTask {
   approvedWorkerIds: string[];
   status: 'pending_admin' | 'active' | 'completed' | 'rejected';
   createdAt: string;
+}
+
+export interface VideoWatchSessionRecord {
+  id: string;
+  userId: string;
+  targetType: 'video' | 'task';
+  targetId: string;
+  requiredSeconds: number;
+  accumulatedSeconds: number;
+  heartbeatCount: number;
+  status: 'watching' | 'completed' | 'claimed';
+  startedAtMs: number;
+  lastHeartbeatAtMs: number;
+  completedAtMs?: number;
+  claimedAtMs?: number;
+  verificationSignature?: string;
+  serverStartedAt: unknown;
+  updatedAt: string;
 }
 
 export interface TaskSubmission {
