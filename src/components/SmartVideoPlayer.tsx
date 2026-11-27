@@ -187,7 +187,7 @@ export function SmartVideoPlayer({
               if (parsed.kind === 'youtube') {
                 try {
                   e.currentTarget.contentWindow?.postMessage(
-                    JSON.stringify({ event: 'listening' }),
+                    JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }),
                     '*',
                   );
                 } catch {

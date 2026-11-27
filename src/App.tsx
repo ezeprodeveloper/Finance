@@ -28,6 +28,7 @@ function AppContent() {
     authStatus,
     profileStatus,
     profileError,
+    isRegistering,
     role,
     store,
     videoWatchSessions,
@@ -52,6 +53,7 @@ function AppContent() {
   const [loginInitialView, setLoginInitialView] = useState<'login' | 'forgot'>('login');
   const [registerOpen, setRegisterOpen] = useState(false);
   const [showSplash, setShowSplash] = useState(true);
+  const [loadingTimedOut, setLoadingTimedOut] = useState(false);
   const [resetOobCode, setResetOobCode] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
     const params = new URLSearchParams(window.location.search);
@@ -109,13 +111,34 @@ function AppContent() {
     return err;
   };
 
+  const isShowingLoadingGate =
+    authStatus === 'initializing' ||
+    (authStatus === 'authenticated' &&
+      role === 'user' &&
+      profileStatus === 'loading' &&
+      !(registerOpen && isRegistering));
+
+  useEffect(() => {
+    if (!isShowingLoadingGate) {
+      setLoadingTimedOut(false);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setLoadingTimedOut(true);
+    }, 8000);
+    return () => window.clearTimeout(timer);
+  }, [isShowingLoadingGate]);
+
   const runAction = useCallback(
-    async (fn: () => Promise<void>) => {
+    async (fn: () => Promise<void>): Promise<string | null> => {
       setActionError(null);
       try {
         await fn();
+        return null;
       } catch (err) {
-        setActionError(err instanceof Error ? err.message : 'Operation failed.');
+        const msg = err instanceof Error ? err.message : 'Operation failed.';
+        setActionError(msg);
+        return msg;
       }
     },
     [setActionError],
@@ -124,19 +147,19 @@ function AppContent() {
   /* ------------------------------------------------------------------------ */
   /* Member Financial & Interactive Handlers (Cloud Firestore)                */
   /* ------------------------------------------------------------------------ */
-  const handleSubmitActivationPayment = async (phone: string, ref: string) => {
-    if (!authUid) return;
-    await runAction(() => firestoreService.submitActivation(authUid, phone, ref));
+  const handleSubmitActivationPayment = async (phone: string, ref: string): Promise<string | null> => {
+    if (!authUid) return 'Not signed in.';
+    return runAction(() => firestoreService.submitActivation(authUid, phone, ref));
   };
 
-  const handleDailyCheckIn = async () => {
-    if (!authUid) return;
-    await runAction(() => firestoreService.dailyCheckIn(authUid));
+  const handleDailyCheckIn = async (): Promise<string | null> => {
+    if (!authUid) return 'Not signed in.';
+    return runAction(() => firestoreService.dailyCheckIn(authUid));
   };
 
-  const handleSubmitKyc = async (data: RwandaKycData) => {
-    if (!authUid) return;
-    await runAction(() => firestoreService.submitKyc(authUid, data));
+  const handleSubmitKyc = async (data: RwandaKycData): Promise<string | null> => {
+    if (!authUid) return 'Not signed in.';
+    return runAction(() => firestoreService.submitKyc(authUid, data));
   };
 
   const handleCreateSavingsGoal = async (
@@ -144,21 +167,21 @@ function AppContent() {
     planType: SavingsGoal['planType'],
     targetRwf: number,
     targetDate: string,
-  ) => {
-    if (!authUid) return;
-    await runAction(() =>
+  ): Promise<string | null> => {
+    if (!authUid) return 'Not signed in.';
+    return runAction(() =>
       firestoreService.createSavingsGoal(authUid, { title, planType, targetRwf, targetDate }),
     );
   };
 
-  const handleDepositToSavings = async (goalId: string, amountRwf: number) => {
-    if (!authUid) return;
-    await runAction(() => firestoreService.depositSavings(authUid, goalId, amountRwf));
+  const handleDepositToSavings = async (goalId: string, amountRwf: number): Promise<string | null> => {
+    if (!authUid) return 'Not signed in.';
+    return runAction(() => firestoreService.depositSavings(authUid, goalId, amountRwf));
   };
 
-  const handleWithdrawFromSavings = async (goalId: string, amountRwf: number) => {
-    if (!authUid) return;
-    await runAction(() => firestoreService.withdrawSavings(authUid, goalId, amountRwf));
+  const handleWithdrawFromSavings = async (goalId: string, amountRwf: number): Promise<string | null> => {
+    if (!authUid) return 'Not signed in.';
+    return runAction(() => firestoreService.withdrawSavings(authUid, goalId, amountRwf));
   };
 
   const handleRequestLoan = async (payload: {
@@ -169,34 +192,34 @@ function AppContent() {
     annualRatePercent: number;
     monthlyPaymentRwf: number;
     totalRepayableRwf: number;
-  }) => {
-    if (!authUid) return;
-    await runAction(() => firestoreService.requestLoan(authUid, payload));
+  }): Promise<string | null> => {
+    if (!authUid) return 'Not signed in.';
+    return runAction(() => firestoreService.requestLoan(authUid, payload));
   };
 
-  const handleRepayLoan = async (loanId: string, amountRwf: number) => {
-    if (!authUid) return;
-    await runAction(() => firestoreService.repayLoan(authUid, loanId, amountRwf));
+  const handleRepayLoan = async (loanId: string, amountRwf: number): Promise<string | null> => {
+    if (!authUid) return 'Not signed in.';
+    return runAction(() => firestoreService.repayLoan(authUid, loanId, amountRwf));
   };
 
-  const handlePurchasePlan = async (tier: InvestmentPlanTier, paymentRef: string) => {
-    if (!authUid) return;
-    await runAction(() => firestoreService.purchaseInvestment(authUid, tier.id, paymentRef));
+  const handlePurchasePlan = async (tier: InvestmentPlanTier, paymentRef: string): Promise<string | null> => {
+    if (!authUid) return 'Not signed in.';
+    return runAction(() => firestoreService.purchaseInvestment(authUid, tier.id, paymentRef));
   };
 
-  const handleCompleteSpin = async (rewardRwf: number) => {
-    if (!authUid) return;
-    await runAction(() => firestoreService.completeSpin(authUid, rewardRwf));
+  const handleCompleteSpin = async (rewardRwf: number): Promise<string | null> => {
+    if (!authUid) return 'Not signed in.';
+    return runAction(() => firestoreService.completeSpin(authUid, rewardRwf));
   };
 
-  const handleStartQuizBet = async (stakeRwf: number) => {
-    if (!authUid) return;
-    await runAction(() => firestoreService.startQuizBet(authUid, stakeRwf));
+  const handleStartQuizBet = async (stakeRwf: number): Promise<string | null> => {
+    if (!authUid) return 'Not signed in.';
+    return runAction(() => firestoreService.startQuizBet(authUid, stakeRwf));
   };
 
-  const handleFinishQuizBet = async (session: BetSession) => {
-    if (!authUid) return;
-    await runAction(() => firestoreService.finishQuizBet(authUid, session));
+  const handleFinishQuizBet = async (session: BetSession): Promise<string | null> => {
+    if (!authUid) return 'Not signed in.';
+    return runAction(() => firestoreService.finishQuizBet(authUid, session));
   };
 
   const handleRequestAirtime = async (payload: {
@@ -205,9 +228,9 @@ function AppContent() {
     phoneNumber: string;
     amountRwf: number;
     bundleLabel?: string;
-  }) => {
-    if (!authUid) return;
-    await runAction(() => firestoreService.requestAirtime(authUid, payload));
+  }): Promise<string | null> => {
+    if (!authUid) return 'Not signed in.';
+    return runAction(() => firestoreService.requestAirtime(authUid, payload));
   };
 
   const handleLookupWalletAddress = async (
@@ -289,9 +312,9 @@ function AppContent() {
     feeRwf: number;
     netAmountRwf: number;
     isFirstBonusWithdrawal: boolean;
-  }) => {
-    if (!authUid) return;
-    await runAction(() =>
+  }): Promise<string | null> => {
+    if (!authUid) return 'Not signed in.';
+    return runAction(() =>
       firestoreService.requestWithdrawal(authUid, {
         network: payload.network,
         destinationType: payload.destinationType,
@@ -538,10 +561,7 @@ function AppContent() {
       );
     }
 
-    if (
-      authStatus === 'initializing' ||
-      (authStatus === 'authenticated' && role === 'user' && profileStatus === 'loading')
-    ) {
+    if (isShowingLoadingGate) {
       return (
         <div
           className="min-h-screen bg-shifting-aurora text-white flex items-center justify-center p-6"
@@ -558,6 +578,31 @@ function AppContent() {
             <p className="text-xs text-slate-200 leading-relaxed">
               Verifying your Firebase session and loading your Firestore account records.
             </p>
+            {loadingTimedOut && (
+              <div className="pt-3 border-t border-white/15 space-y-2">
+                <p className="text-[11px] text-amber-200">
+                  Loading is taking longer than expected. You can retry checking your Firestore profile or sign out.
+                </p>
+                <div className="flex items-center justify-center gap-2">
+                  {authUid && (
+                    <button
+                      type="button"
+                      onClick={() => void retryProfileLoad()}
+                      className="h-9 px-3.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg"
+                    >
+                      Retry Profile Load
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void signOutUser()}
+                    className="h-9 px-3.5 bg-white/15 hover:bg-white/25 text-white text-xs font-semibold rounded-lg"
+                  >
+                    Sign Out
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       );

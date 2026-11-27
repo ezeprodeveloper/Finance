@@ -24,7 +24,7 @@ import { StatusLabel } from '../StatusLabel';
 
 interface UserKycViewProps {
   user: RegisteredUser;
-  onSubmitKyc: (data: RwandaKycData) => void;
+  onSubmitKyc: (data: RwandaKycData) => Promise<string | null> | void;
 }
 
 export function UserKycView({ user, onSubmitKyc }: UserKycViewProps) {
@@ -42,7 +42,9 @@ export function UserKycView({ user, onSubmitKyc }: UserKycViewProps) {
   const [selfiePhoto, setSelfiePhoto] = useState(user.kycData?.selfiePhotoDataUrl ?? '');
   const [docName, setDocName] = useState('');
   const [selfieName, setSelfieName] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const handlePhoto = async (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -65,9 +67,10 @@ export function UserKycView({ user, onSubmitKyc }: UserKycViewProps) {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setNotice(null);
 
     if (!isValidRwandaId(nationalId)) {
       setError('Enter a valid 16-digit Rwanda National ID.');
@@ -86,21 +89,31 @@ export function UserKycView({ user, onSubmitKyc }: UserKycViewProps) {
       return;
     }
 
-    onSubmitKyc({
-      nationalId: nationalId.replace(/\s/g, ''),
-      idIssueDistrict: idIssueDistrict.trim(),
-      province,
-      akarere,
-      umurenge,
-      akagari,
-      umudugudu,
-      occupation: occupation.trim(),
-      nextOfKinName: nextOfKinName.trim(),
-      nextOfKinPhone: nextOfKinPhone.trim(),
-      idDocumentPhotoDataUrl: docPhoto,
-      selfiePhotoDataUrl: selfiePhoto,
-      submittedAt: new Date().toISOString(),
-    });
+    setSubmitting(true);
+    try {
+      const err = await onSubmitKyc({
+        nationalId: nationalId.replace(/\s/g, ''),
+        idIssueDistrict: idIssueDistrict.trim(),
+        province,
+        akarere,
+        umurenge,
+        akagari,
+        umudugudu,
+        occupation: occupation.trim(),
+        nextOfKinName: nextOfKinName.trim(),
+        nextOfKinPhone: nextOfKinPhone.trim(),
+        idDocumentPhotoDataUrl: docPhoto,
+        selfiePhotoDataUrl: selfiePhoto,
+        submittedAt: new Date().toISOString(),
+      });
+      if (err) {
+        setError(err);
+        return;
+      }
+      setNotice('Rwanda KYC submitted for Admin verification.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -319,13 +332,22 @@ export function UserKycView({ user, onSubmitKyc }: UserKycViewProps) {
               {error}
             </p>
           )}
+          {notice && (
+            <p className="text-xs font-medium text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+              {notice}
+            </p>
+          )}
 
           <button
             type="submit"
-            disabled={user.kycStatus === 'pending'}
+            disabled={submitting || user.kycStatus === 'pending'}
             className="h-10 px-5 bg-[#071B38] hover:bg-[#0c2954] disabled:opacity-50 text-white text-sm font-semibold rounded-lg"
           >
-            {user.kycStatus === 'pending' ? 'KYC Pending Review' : 'Submit Rwanda KYC'}
+            {submitting
+              ? 'Submitting KYC...'
+              : user.kycStatus === 'pending'
+                ? 'KYC Pending Review'
+                : 'Submit Rwanda KYC'}
           </button>
         </form>
       )}
@@ -341,9 +363,9 @@ interface UserSavingsViewProps {
   user: RegisteredUser;
   goals: SavingsGoal[];
   onGoToKyc: () => void;
-  onCreateGoal: (title: string, planType: SavingsGoal['planType'], targetRwf: number, targetDate: string) => void;
-  onDepositToSavings: (goalId: string, amountRwf: number) => void;
-  onWithdrawFromSavings: (goalId: string, amountRwf: number) => void;
+  onCreateGoal: (title: string, planType: SavingsGoal['planType'], targetRwf: number, targetDate: string) => Promise<string | null> | void;
+  onDepositToSavings: (goalId: string, amountRwf: number) => Promise<string | null> | void;
+  onWithdrawFromSavings: (goalId: string, amountRwf: number) => Promise<string | null> | void;
 }
 
 export function UserSavingsView({
@@ -360,6 +382,7 @@ export function UserSavingsView({
   const [targetDate, setTargetDate] = useState('2027-06-30');
   const [selectedGoalId, setSelectedGoalId] = useState(goals[0]?.id ?? '');
   const [moveAmount, setMoveAmount] = useState('500');
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -484,9 +507,14 @@ export function UserSavingsView({
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
-                  onClick={() => {
+                  disabled={submitting}
+                  onClick={async () => {
                     setError(null);
                     setNotice(null);
+                    if (!activeGoalId) {
+                      setError('Create or select a savings plan first.');
+                      return;
+                    }
                     const amt = Number(moveAmount);
                     if (!Number.isFinite(amt) || amt < 50) {
                       setError('Enter at least 50 RWF.');
@@ -496,18 +524,32 @@ export function UserSavingsView({
                       setError('Insufficient wallet balance.');
                       return;
                     }
-                    onDepositToSavings(activeGoalId, Math.round(amt));
-                    setNotice(`Saved ${formatRwf(amt)} from your wallet.`);
+                    setSubmitting(true);
+                    try {
+                      const err = await onDepositToSavings(activeGoalId, Math.round(amt));
+                      if (err) {
+                        setError(err);
+                        return;
+                      }
+                      setNotice(`Saved ${formatRwf(amt)} from your wallet.`);
+                    } finally {
+                      setSubmitting(false);
+                    }
                   }}
-                  className="h-10 px-3 bg-[#071B38] hover:bg-[#0c2954] text-white text-xs font-semibold rounded-lg"
+                  className="h-10 px-3 bg-[#071B38] hover:bg-[#0c2954] disabled:opacity-50 text-white text-xs font-semibold rounded-lg"
                 >
-                  Save to Plan
+                  {submitting ? 'Processing...' : 'Save to Plan'}
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
+                  disabled={submitting}
+                  onClick={async () => {
                     setError(null);
                     setNotice(null);
+                    if (!activeGoalId) {
+                      setError('Create or select a savings plan first.');
+                      return;
+                    }
                     const amt = Number(moveAmount);
                     const targetGoal = goals.find((g) => g.id === activeGoalId);
                     if (!targetGoal || !Number.isFinite(amt) || amt < 50) {
@@ -518,10 +560,19 @@ export function UserSavingsView({
                       setError('Amount exceeds plan saved balance.');
                       return;
                     }
-                    onWithdrawFromSavings(activeGoalId, Math.round(amt));
-                    setNotice(`Moved ${formatRwf(amt)} back to wallet balance.`);
+                    setSubmitting(true);
+                    try {
+                      const err = await onWithdrawFromSavings(activeGoalId, Math.round(amt));
+                      if (err) {
+                        setError(err);
+                        return;
+                      }
+                      setNotice(`Moved ${formatRwf(amt)} back to wallet balance.`);
+                    } finally {
+                      setSubmitting(false);
+                    }
                   }}
-                  className="h-10 px-3 border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold rounded-lg"
+                  className="h-10 px-3 border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-800 text-xs font-semibold rounded-lg"
                 >
                   Move to Wallet
                 </button>
@@ -532,16 +583,31 @@ export function UserSavingsView({
           <section className="bg-white/95 border border-slate-200 rounded-xl p-6 space-y-3.5">
             <h2 className="text-base font-semibold text-slate-900">Create savings plan</h2>
             <form
-              onSubmit={(e) => {
+              onSubmit={async (e) => {
                 e.preventDefault();
                 setError(null);
+                setNotice(null);
                 if (title.trim().length < 2) {
                   setError('Enter a plan title.');
                   return;
                 }
-                onCreateGoal(title.trim(), planType, Math.max(1000, Number(target) || 1000), targetDate);
-                setTitle('');
-                setNotice('Savings plan created.');
+                setSubmitting(true);
+                try {
+                  const err = await onCreateGoal(
+                    title.trim(),
+                    planType,
+                    Math.max(1000, Number(target) || 1000),
+                    targetDate,
+                  );
+                  if (err) {
+                    setError(err);
+                    return;
+                  }
+                  setTitle('');
+                  setNotice('Savings plan created.');
+                } finally {
+                  setSubmitting(false);
+                }
               }}
               className="space-y-3"
             >
@@ -579,9 +645,10 @@ export function UserSavingsView({
               />
               <button
                 type="submit"
-                className="w-full h-10 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-lg"
+                disabled={submitting}
+                className="w-full h-10 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-semibold rounded-lg"
               >
-                Create Plan
+                {submitting ? 'Creating...' : 'Create Plan'}
               </button>
             </form>
           </section>
@@ -607,8 +674,8 @@ interface UserLoansViewProps {
     annualRatePercent: number;
     monthlyPaymentRwf: number;
     totalRepayableRwf: number;
-  }) => void;
-  onRepayLoan: (loanId: string, amountRwf: number) => void;
+  }) => Promise<string | null> | void;
+  onRepayLoan: (loanId: string, amountRwf: number) => Promise<string | null> | void;
 }
 
 export function UserLoansView({
@@ -622,6 +689,8 @@ export function UserLoansView({
   const [principal, setPrincipal] = useState('10000');
   const [termMonths, setTermMonths] = useState(3);
   const [reason, setReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [repayingId, setRepayingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -635,7 +704,7 @@ export function UserLoansView({
     return { totalRepayable, monthly };
   }, [principalNum, termMonths]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setNotice(null);
@@ -649,19 +718,28 @@ export function UserLoansView({
       setError('State the purpose of your loan request.');
       return;
     }
-    onRequestLoan({
-      product,
-      reason: reason.trim(),
-      principalRwf: Math.round(principalNum),
-      termMonths,
-      annualRatePercent: annualRate,
-      monthlyPaymentRwf: calc.monthly,
-      totalRepayableRwf: calc.totalRepayable,
-    });
-    setReason('');
-    setNotice(
-      `Submitted request for ${formatRwf(principalNum)}. E-Finance will review and disburse to your balance.`,
-    );
+    setSubmitting(true);
+    try {
+      const err = await onRequestLoan({
+        product,
+        reason: reason.trim(),
+        principalRwf: Math.round(principalNum),
+        termMonths,
+        annualRatePercent: annualRate,
+        monthlyPaymentRwf: calc.monthly,
+        totalRepayableRwf: calc.totalRepayable,
+      });
+      if (err) {
+        setError(err);
+        return;
+      }
+      setReason('');
+      setNotice(
+        `Submitted request for ${formatRwf(principalNum)}. E-Finance will review and disburse to your balance.`,
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -775,12 +853,14 @@ export function UserLoansView({
 
           <button
             type="submit"
-            disabled={!meetsSavingsRequirement}
+            disabled={!meetsSavingsRequirement || submitting}
             className="w-full h-10 bg-[#071B38] hover:bg-[#0c2954] disabled:opacity-45 text-white text-sm font-semibold rounded-lg"
           >
-            {meetsSavingsRequirement
-              ? 'Submit Loan Request'
-              : 'Increase Savings Above Requested Loan'}
+            {submitting
+              ? 'Submitting Loan...'
+              : meetsSavingsRequirement
+                ? 'Submit Loan Request'
+                : 'Increase Savings Above Requested Loan'}
           </button>
         </form>
       </section>
@@ -840,17 +920,30 @@ export function UserLoansView({
                   {ln.status === 'approved' && remaining > 0 && (
                     <button
                       type="button"
-                      disabled={user.walletBalanceRwf <= 0}
-                      onClick={() => {
+                      disabled={user.walletBalanceRwf <= 0 || repayingId === ln.id}
+                      onClick={async () => {
+                        setError(null);
+                        setNotice(null);
                         const payAmt = Math.min(remaining, user.walletBalanceRwf, ln.monthlyPaymentRwf);
                         if (payAmt > 0) {
-                          onRepayLoan(ln.id, payAmt);
-                          setNotice(`Repaid ${formatRwf(payAmt)} toward ${ln.product}.`);
+                          setRepayingId(ln.id);
+                          try {
+                            const err = await onRepayLoan(ln.id, payAmt);
+                            if (err) {
+                              setError(err);
+                              return;
+                            }
+                            setNotice(`Repaid ${formatRwf(payAmt)} toward ${ln.product}.`);
+                          } finally {
+                            setRepayingId(null);
+                          }
                         }
                       }}
                       className="h-8 px-3 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-40 text-white text-xs font-semibold rounded-md"
                     >
-                      Repay {formatRwf(Math.min(remaining, Math.max(0, user.walletBalanceRwf), ln.monthlyPaymentRwf))} from Wallet
+                      {repayingId === ln.id
+                        ? 'Processing Repayment...'
+                        : `Repay ${formatRwf(Math.min(remaining, Math.max(0, user.walletBalanceRwf), ln.monthlyPaymentRwf))} from Wallet`}
                     </button>
                   )}
                 </div>
@@ -882,7 +975,7 @@ interface UserWithdrawalsViewProps {
     feeRwf: number;
     netAmountRwf: number;
     isFirstBonusWithdrawal: boolean;
-  }) => void;
+  }) => Promise<string | null> | void;
 }
 
 export function UserWithdrawalsView({
@@ -901,6 +994,7 @@ export function UserWithdrawalsView({
   const [amount, setAmount] = useState(
     isFirstBonusWithdrawal ? String(settings.welcomeBonusRwf) : String(settings.subsequentMinWithdrawalRwf),
   );
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -932,7 +1026,7 @@ export function UserWithdrawalsView({
   const feeRwf = Math.round((gross * appliedFeePercent) / 100);
   const netRwf = Math.max(0, gross - feeRwf);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setNotice(null);
@@ -977,20 +1071,29 @@ export function UserWithdrawalsView({
       return;
     }
 
-    onRequestWithdrawal({
-      network,
-      destinationType: network === 'Airtel / Tigo Rwanda' ? 'Phone Number' : destinationType,
-      destinationValue: destinationValue.trim(),
-      accountRegisteredNames: registeredNames.trim(),
-      grossAmountRwf: gross,
-      feePercent: appliedFeePercent,
-      feeRwf,
-      netAmountRwf: netRwf,
-      isFirstBonusWithdrawal,
-    });
-    setNotice(
-      `Withdrawal submitted for ${formatRwf(gross)} via ${network} (${destinationValue.trim()}). Net payout: ${formatRwf(netRwf)}.`,
-    );
+    setSubmitting(true);
+    try {
+      const err = await onRequestWithdrawal({
+        network,
+        destinationType: network === 'Airtel / Tigo Rwanda' ? 'Phone Number' : destinationType,
+        destinationValue: destinationValue.trim(),
+        accountRegisteredNames: registeredNames.trim(),
+        grossAmountRwf: gross,
+        feePercent: appliedFeePercent,
+        feeRwf,
+        netAmountRwf: netRwf,
+        isFirstBonusWithdrawal,
+      });
+      if (err) {
+        setError(err);
+        return;
+      }
+      setNotice(
+        `Withdrawal submitted for ${formatRwf(gross)} via ${network} (${destinationValue.trim()}). Net payout: ${formatRwf(netRwf)}.`,
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -1143,9 +1246,10 @@ export function UserWithdrawalsView({
 
           <button
             type="submit"
-            className="w-full h-10 bg-[#071B38] hover:bg-[#0c2954] text-white text-sm font-semibold rounded-lg"
+            disabled={submitting}
+            className="w-full h-10 bg-[#071B38] hover:bg-[#0c2954] disabled:opacity-50 text-white text-sm font-semibold rounded-lg"
           >
-            Request Withdrawal
+            {submitting ? 'Submitting Withdrawal...' : 'Request Withdrawal'}
           </button>
         </form>
       </section>

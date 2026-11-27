@@ -47,7 +47,7 @@ interface UserAirtimeViewProps {
     phoneNumber: string;
     amountRwf: number;
     bundleLabel?: string;
-  }) => void;
+  }) => Promise<string | null> | void;
 }
 
 export function UserAirtimeView({
@@ -60,6 +60,7 @@ export function UserAirtimeView({
   const [phoneNumber, setPhoneNumber] = useState(user.phone);
   const [amountInput, setAmountInput] = useState('500');
   const [bundleLabel, setBundleLabel] = useState('Custom Internet Bundle');
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -68,7 +69,7 @@ export function UserAirtimeView({
     [requests, user.id],
   );
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setNotice(null);
@@ -87,16 +88,25 @@ export function UserAirtimeView({
       return;
     }
 
-    onRequestAirtime({
-      network,
-      serviceType,
-      phoneNumber: phoneNumber.trim(),
-      amountRwf: amt,
-      bundleLabel: serviceType === 'Internet Bundle' ? bundleLabel : undefined,
-    });
-    setNotice(
-      `Wait a moment — your ${network} ${serviceType} order (${formatRwf(amt)} for ${phoneNumber.trim()}) has been sent to Admin for confirmation and delivery.`,
-    );
+    setSubmitting(true);
+    try {
+      const err = await onRequestAirtime({
+        network,
+        serviceType,
+        phoneNumber: phoneNumber.trim(),
+        amountRwf: amt,
+        bundleLabel: serviceType === 'Internet Bundle' ? bundleLabel : undefined,
+      });
+      if (err) {
+        setError(err);
+        return;
+      }
+      setNotice(
+        `Wait a moment — your ${network} ${serviceType} order (${formatRwf(amt)} for ${phoneNumber.trim()}) has been sent to Admin for confirmation and delivery.`,
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -246,9 +256,12 @@ export function UserAirtimeView({
 
           <button
             type="submit"
-            className="w-full h-10 bg-[#071B38] hover:bg-[#0c2954] text-white text-sm font-semibold rounded-lg"
+            disabled={submitting}
+            className="w-full h-10 bg-[#071B38] hover:bg-[#0c2954] disabled:opacity-50 text-white text-sm font-semibold rounded-lg"
           >
-            Order {serviceType} ({formatRwf(Number(amountInput) || 0)})
+            {submitting
+              ? `Ordering ${serviceType}...`
+              : `Order ${serviceType} (${formatRwf(Number(amountInput) || 0)})`}
           </button>
         </form>
       </section>
@@ -644,11 +657,13 @@ export function UserExchangeUsdtView({
   // FX state
   const [fxDirection, setFxDirection] = useState<FxExchangeRecord['direction']>('RWF_TO_USD');
   const [fxInput, setFxInput] = useState('13800');
+  const [fxSubmitting, setFxSubmitting] = useState(false);
   const [fxError, setFxError] = useState<string | null>(null);
   const [fxNotice, setFxNotice] = useState<string | null>(null);
 
   // USDT Savings state
   const [savInput, setSavInput] = useState('10');
+  const [savSubmitting, setSavSubmitting] = useState(false);
   const [savError, setSavError] = useState<string | null>(null);
   const [savNotice, setSavNotice] = useState<string | null>(null);
 
@@ -658,6 +673,7 @@ export function UserExchangeUsdtView({
   const [usdtAmountInput, setUsdtAmountInput] = useState('10');
   const [usdtDestOrRef, setUsdtDestOrRef] = useState('');
   const [usdtNote, setUsdtNote] = useState('');
+  const [usdtSubmitting, setUsdtSubmitting] = useState(false);
   const [usdtError, setUsdtError] = useState<string | null>(null);
   const [usdtNotice, setUsdtNotice] = useState<string | null>(null);
   const [copiedBin, setCopiedBin] = useState(false);
@@ -682,28 +698,38 @@ export function UserExchangeUsdtView({
     e.preventDefault();
     setFxError(null);
     setFxNotice(null);
-    const err = await onFxExchange(fxDirection, fxFromNum);
-    if (err) {
-      setFxError(err);
-      return;
+    setFxSubmitting(true);
+    try {
+      const err = await onFxExchange(fxDirection, fxFromNum);
+      if (err) {
+        setFxError(err);
+        return;
+      }
+      setFxNotice(`Exchange completed: ${fxFromNum} converted to ${fxPreviewTo}.`);
+    } finally {
+      setFxSubmitting(false);
     }
-    setFxNotice(`Exchange completed: ${fxFromNum} converted to ${fxPreviewTo}.`);
   };
 
   const handleUsdtSavings = async (action: 'deposit' | 'withdraw') => {
     setSavError(null);
     setSavNotice(null);
     const amt = Number(savInput) || 0;
-    const err = await onUsdtSavingsMove(action, amt);
-    if (err) {
-      setSavError(err);
-      return;
+    setSavSubmitting(true);
+    try {
+      const err = await onUsdtSavingsMove(action, amt);
+      if (err) {
+        setSavError(err);
+        return;
+      }
+      setSavNotice(
+        action === 'deposit'
+          ? `Saved ${formatUsdt(amt)} into your USDT Savings Vault.`
+          : `Moved ${formatUsdt(amt)} back to your USDT Wallet.`,
+      );
+    } finally {
+      setSavSubmitting(false);
     }
-    setSavNotice(
-      action === 'deposit'
-        ? `Saved ${formatUsdt(amt)} into your USDT Savings Vault.`
-        : `Moved ${formatUsdt(amt)} back to your USDT Wallet.`,
-    );
   };
 
   const handleUsdtRequestSubmit = async (e: React.FormEvent) => {
@@ -711,26 +737,31 @@ export function UserExchangeUsdtView({
     setUsdtError(null);
     setUsdtNotice(null);
     const amt = Number(usdtAmountInput) || 0;
-    const err = await onCreateUsdtRequest({
-      actionType: usdtAction,
-      amountUsdt: amt,
-      network: usdtNetwork,
-      destinationOrTxRef: usdtDestOrRef.trim(),
-      note: usdtNote.trim() || undefined,
-    });
-    if (err) {
-      setUsdtError(err);
-      return;
+    setUsdtSubmitting(true);
+    try {
+      const err = await onCreateUsdtRequest({
+        actionType: usdtAction,
+        amountUsdt: amt,
+        network: usdtNetwork,
+        destinationOrTxRef: usdtDestOrRef.trim(),
+        note: usdtNote.trim() || undefined,
+      });
+      if (err) {
+        setUsdtError(err);
+        return;
+      }
+      setUsdtNotice(
+        usdtAction === 'deposit'
+          ? `USDT deposit (${formatUsdt(amt)}) submitted. Admin will verify and credit your USDT Wallet.`
+          : usdtAction === 'send_binance'
+            ? `Send to Binance request (${formatUsdt(amt)} via ${usdtNetwork}) submitted. Admin will approve after sending.`
+            : `USDT withdrawal (${formatUsdt(amt)}) submitted for Admin approval.`,
+      );
+      setUsdtDestOrRef('');
+      setUsdtNote('');
+    } finally {
+      setUsdtSubmitting(false);
     }
-    setUsdtNotice(
-      usdtAction === 'deposit'
-        ? `USDT deposit (${formatUsdt(amt)}) submitted. Admin will verify and credit your USDT Wallet.`
-        : usdtAction === 'send_binance'
-          ? `Send to Binance request (${formatUsdt(amt)} via ${usdtNetwork}) submitted. Admin will approve after sending.`
-          : `USDT withdrawal (${formatUsdt(amt)}) submitted for Admin approval.`,
-    );
-    setUsdtDestOrRef('');
-    setUsdtNote('');
   };
 
   return (
@@ -841,9 +872,10 @@ export function UserExchangeUsdtView({
 
               <button
                 type="submit"
-                className="w-full h-10 bg-[#071B38] hover:bg-[#0c2954] text-white text-xs font-semibold rounded-lg"
+                disabled={fxSubmitting}
+                className="w-full h-10 bg-[#071B38] hover:bg-[#0c2954] disabled:opacity-50 text-white text-xs font-semibold rounded-lg"
               >
-                Convert Instantly
+                {fxSubmitting ? 'Converting...' : 'Convert Instantly'}
               </button>
             </form>
           </section>
@@ -881,15 +913,17 @@ export function UserExchangeUsdtView({
             <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
+                disabled={savSubmitting}
                 onClick={() => handleUsdtSavings('deposit')}
-                className="h-10 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-lg"
+                className="h-10 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-semibold rounded-lg"
               >
-                Save USDT
+                {savSubmitting ? 'Saving...' : 'Save USDT'}
               </button>
               <button
                 type="button"
+                disabled={savSubmitting}
                 onClick={() => handleUsdtSavings('withdraw')}
-                className="h-10 border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold rounded-lg"
+                className="h-10 border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-800 text-xs font-semibold rounded-lg"
               >
                 Move to USDT Wallet
               </button>
@@ -1044,13 +1078,16 @@ export function UserExchangeUsdtView({
 
               <button
                 type="submit"
-                className="w-full h-10 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-semibold rounded-lg"
+                disabled={usdtSubmitting}
+                className="w-full h-10 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-sm font-semibold rounded-lg"
               >
-                {usdtAction === 'deposit'
-                  ? 'Submit USDT Deposit for Admin Confirmation'
-                  : usdtAction === 'send_binance'
-                    ? 'Send USDT to Binance (Admin Approval)'
-                    : 'Request USDT Withdrawal'}
+                {usdtSubmitting
+                  ? 'Submitting Request...'
+                  : usdtAction === 'deposit'
+                    ? 'Submit USDT Deposit for Admin Confirmation'
+                    : usdtAction === 'send_binance'
+                      ? 'Send USDT to Binance (Admin Approval)'
+                      : 'Request USDT Withdrawal'}
               </button>
             </form>
           </section>

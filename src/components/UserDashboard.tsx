@@ -99,12 +99,12 @@ interface UserDashboardProps {
   transactions: TransactionRecord[];
   videoWatchSessions: VideoWatchSessionRecord[];
   getAuthToken: () => Promise<string | null>;
-  onSubmitActivationPayment: (phone: string, ref: string) => void;
-  onDailyCheckIn: () => void;
-  onSubmitKyc: (data: RwandaKycData) => void;
-  onCreateSavingsGoal: (title: string, planType: SavingsGoal['planType'], targetRwf: number, targetDate: string) => void;
-  onDepositToSavings: (goalId: string, amountRwf: number) => void;
-  onWithdrawFromSavings: (goalId: string, amountRwf: number) => void;
+  onSubmitActivationPayment: (phone: string, ref: string) => Promise<string | null> | void;
+  onDailyCheckIn: () => Promise<string | null> | void;
+  onSubmitKyc: (data: RwandaKycData) => Promise<string | null> | void;
+  onCreateSavingsGoal: (title: string, planType: SavingsGoal['planType'], targetRwf: number, targetDate: string) => Promise<string | null> | void;
+  onDepositToSavings: (goalId: string, amountRwf: number) => Promise<string | null> | void;
+  onWithdrawFromSavings: (goalId: string, amountRwf: number) => Promise<string | null> | void;
   onRequestLoan: (payload: {
     product: string;
     reason: string;
@@ -113,19 +113,19 @@ interface UserDashboardProps {
     annualRatePercent: number;
     monthlyPaymentRwf: number;
     totalRepayableRwf: number;
-  }) => void;
-  onRepayLoan: (loanId: string, amountRwf: number) => void;
-  onPurchasePlan: (tier: InvestmentPlanTier, paymentRef: string) => void;
-  onCompleteSpin: (rewardRwf: number) => void;
-  onStartQuizBet: (stakeRwf: number) => void;
-  onFinishQuizBet: (session: BetSession) => void;
+  }) => Promise<string | null> | void;
+  onRepayLoan: (loanId: string, amountRwf: number) => Promise<string | null> | void;
+  onPurchasePlan: (tier: InvestmentPlanTier, paymentRef: string) => Promise<string | null> | void;
+  onCompleteSpin: (rewardRwf: number) => Promise<string | null> | void;
+  onStartQuizBet: (stakeRwf: number) => Promise<string | null> | void;
+  onFinishQuizBet: (session: BetSession) => Promise<string | null> | void;
   onRequestAirtime: (payload: {
     network: 'MTN Rwanda' | 'Airtel Rwanda';
     serviceType: 'Airtime' | 'Internet Bundle';
     phoneNumber: string;
     amountRwf: number;
     bundleLabel?: string;
-  }) => void;
+  }) => Promise<string | null> | void;
   onLookupWalletAddress: (address: string) => Promise<WalletAddressRecord | null>;
   onSendP2P: (payload: {
     receiverId: string;
@@ -159,7 +159,7 @@ interface UserDashboardProps {
     feeRwf: number;
     netAmountRwf: number;
     isFirstBonusWithdrawal: boolean;
-  }) => void;
+  }) => Promise<string | null> | void;
   onWatchVideoComplete: (campaignId: string, verificationSignature?: string) => Promise<string | null>;
   onCreateVideoCampaign: (payload: {
     title: string;
@@ -229,6 +229,10 @@ export function UserDashboard(props: UserDashboardProps) {
   // Activation payment & address copy state
   const [actPhone, setActPhone] = useState(user.phone);
   const [actRef, setActRef] = useState('');
+  const [submittingAct, setSubmittingAct] = useState(false);
+  const [actError, setActError] = useState<string | null>(null);
+  const [checkingIn, setCheckingIn] = useState(false);
+  const [checkInError, setCheckInError] = useState<string | null>(null);
   const [copiedActCode, setCopiedActCode] = useState(false);
   const [copiedWalletAddr, setCopiedWalletAddr] = useState(false);
 
@@ -457,10 +461,22 @@ export function UserDashboard(props: UserDashboardProps) {
               </div>
             ) : (
               <form
-                onSubmit={(e) => {
+                onSubmit={async (e) => {
                   e.preventDefault();
-                  if (actRef.trim().length < 4) return;
-                  props.onSubmitActivationPayment(actPhone.trim(), actRef.trim());
+                  setActError(null);
+                  if (actRef.trim().length < 4) {
+                    setActError('Enter a valid Mobile Money transaction reference (at least 4 characters).');
+                    return;
+                  }
+                  setSubmittingAct(true);
+                  try {
+                    const err = await props.onSubmitActivationPayment(actPhone.trim(), actRef.trim());
+                    if (err) {
+                      setActError(err);
+                    }
+                  } finally {
+                    setSubmittingAct(false);
+                  }
                 }}
                 className="space-y-4"
               >
@@ -491,11 +507,17 @@ export function UserDashboard(props: UserDashboardProps) {
                     className="w-full h-10 px-3 text-sm font-mono bg-white border border-slate-300 rounded-lg text-slate-900"
                   />
                 </div>
+                {actError && (
+                  <p className="text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                    {actError}
+                  </p>
+                )}
                 <button
                   type="submit"
-                  className="w-full h-11 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-semibold rounded-lg"
+                  disabled={submittingAct}
+                  className="w-full h-11 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-sm font-semibold rounded-lg"
                 >
-                  Confirm {formatRwf(settings.activationFeeRwf)} Payment
+                  {submittingAct ? 'Submitting Payment...' : `Confirm ${formatRwf(settings.activationFeeRwf)} Payment`}
                 </button>
               </form>
             )}
@@ -821,16 +843,34 @@ export function UserDashboard(props: UserDashboardProps) {
                         </span>
                       </div>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          props.onDailyCheckIn();
-                          setNowMs(Date.now());
-                        }}
-                        className="w-full h-11 px-4 bg-white text-[#071B38] hover:bg-slate-100 rounded-lg text-sm font-semibold transition-colors"
-                      >
-                        Claim {formatRwf(settings.dailyCheckInRwf)} Now
-                      </button>
+                      <div className="space-y-2">
+                        {checkInError && (
+                          <p className="text-xs font-medium text-red-200 bg-red-950/50 border border-red-400/40 rounded-lg px-3 py-2">
+                            {checkInError}
+                          </p>
+                        )}
+                        <button
+                          type="button"
+                          disabled={checkingIn}
+                          onClick={async () => {
+                            setCheckInError(null);
+                            setCheckingIn(true);
+                            try {
+                              const err = await props.onDailyCheckIn();
+                              if (err) {
+                                setCheckInError(err);
+                                return;
+                              }
+                              setNowMs(Date.now());
+                            } finally {
+                              setCheckingIn(false);
+                            }
+                          }}
+                          className="w-full h-11 px-4 bg-white text-[#071B38] hover:bg-slate-100 disabled:opacity-60 rounded-lg text-sm font-semibold transition-colors"
+                        >
+                          {checkingIn ? 'Claiming Check-In...' : `Claim ${formatRwf(settings.dailyCheckInRwf)} Now`}
+                        </button>
+                      </div>
                     )}
                   </div>
                 </section>

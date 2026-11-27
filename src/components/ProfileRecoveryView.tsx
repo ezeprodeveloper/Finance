@@ -54,6 +54,10 @@ export function ProfileRecoveryView({
     }
     try {
       const dataUrl = await readFileAsDataUrl(file, 3);
+      if (dataUrl.length > 450000) {
+        setLocalError('Photo size still exceeds 450 KB after compression. Please select a smaller image.');
+        return;
+      }
       setPhotoDataUrl(dataUrl);
       setPhotoName(file.name);
     } catch (err) {
@@ -198,6 +202,12 @@ export function ProfileRecoveryView({
             Sign Out
           </button>
         </div>
+
+        {errorMessage && (
+          <p className="text-xs font-medium text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+            {errorMessage}
+          </p>
+        )}
 
         {pendingDraft && (
           <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">

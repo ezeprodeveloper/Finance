@@ -185,8 +185,40 @@ export interface MemberProfileDraft {
   referralCodeInput: string;
 }
 
+const PENDING_DRAFT_STORAGE_KEY = 'efinance_pending_profile_draft';
 let pendingRegistrationUid: string | null = null;
 let pendingProfileDraft: MemberProfileDraft | null = null;
+
+function savePendingProfileDraft(draft: MemberProfileDraft | null): void {
+  pendingProfileDraft = draft;
+  if (typeof window === 'undefined' || !window.sessionStorage) return;
+  try {
+    if (draft) {
+      window.sessionStorage.setItem(PENDING_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+    } else {
+      window.sessionStorage.removeItem(PENDING_DRAFT_STORAGE_KEY);
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+function loadPendingProfileDraft(): MemberProfileDraft | null {
+  if (pendingProfileDraft) return pendingProfileDraft;
+  if (typeof window === 'undefined' || !window.sessionStorage) return null;
+  try {
+    const raw = window.sessionStorage.getItem(PENDING_DRAFT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as MemberProfileDraft;
+    if (parsed && typeof parsed.email === 'string' && typeof parsed.firstName === 'string') {
+      pendingProfileDraft = parsed;
+      return parsed;
+    }
+  } catch {
+    // Ignore malformed draft
+  }
+  return null;
+}
 
 function mapFirebaseAuthError(err: unknown): string {
   const code =
@@ -468,9 +500,13 @@ export const firestoreService = {
     return onAuthStateChanged(auth, cb);
   },
 
-  isRegistrationPending: (uid: string): boolean => pendingRegistrationUid === uid,
+  isRegistrationPending: (uid?: string): boolean => {
+    if (!pendingRegistrationUid) return false;
+    if (pendingRegistrationUid === '__creating__') return true;
+    return uid ? pendingRegistrationUid === uid : true;
+  },
 
-  getPendingProfileDraft: (): MemberProfileDraft | null => pendingProfileDraft,
+  getPendingProfileDraft: (): MemberProfileDraft | null => loadPendingProfileDraft(),
 
   getMemberProfileByUid: async (uid: string): Promise<RegisteredUser | null> => {
     try {
@@ -884,20 +920,42 @@ export const firestoreService = {
       throw new Error('Compressed identification photo exceeds 450 KB. Please choose a smaller image.');
     }
 
-    let referredByUserId: string | undefined;
-    const cleanRef = payload.referralCodeInput.trim().toUpperCase();
-    if (cleanRef && /^[a-zA-Z0-9_-]{3,32}$/.test(cleanRef)) {
-      const refSnap = await getDoc(doc(db, 'referralDirectory', cleanRef));
-      if (refSnap.exists()) {
-        referredByUserId = String((refSnap.data() as { userId: string }).userId);
+    const existingPhoneSnap = await getDoc(doc(db, 'phoneDirectory', phoneKey)).catch(() => null);
+    let writePhoneDir = true;
+    if (existingPhoneSnap?.exists()) {
+      const existingOwner = String((existingPhoneSnap.data() as { userId?: string }).userId ?? '');
+      if (existingOwner && existingOwner !== uid) {
+        throw new Error('An account with this phone number already exists.');
+      }
+      if (existingOwner === uid) {
+        writePhoneDir = false;
       }
     }
 
-    const accountNumber = generateAccountNumber();
+    let referredByUserId: string | undefined;
+    const cleanRef = payload.referralCodeInput.trim().toUpperCase();
+    if (cleanRef && /^[a-zA-Z0-9_-]{3,32}$/.test(cleanRef)) {
+      const refSnap = await getDoc(doc(db, 'referralDirectory', cleanRef)).catch(() => null);
+      if (refSnap?.exists()) {
+        const refOwner = String((refSnap.data() as { userId?: string }).userId ?? '');
+        if (refOwner && refOwner !== uid) {
+          referredByUserId = refOwner;
+        }
+      }
+    }
+
+    let accountNumber = generateAccountNumber();
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const wSnap = await getDoc(doc(db, 'walletDirectory', accountNumber)).catch(() => null);
+      if (!wSnap?.exists()) break;
+      accountNumber = generateAccountNumber();
+    }
+
     let referralCode = generateReferralCode(payload.firstName);
-    const existingRefSnap = await getDoc(doc(db, 'referralDirectory', referralCode));
-    if (existingRefSnap.exists()) {
-      referralCode = `${referralCode}${Math.floor(10 + Math.random() * 89)}`;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const existingRefSnap = await getDoc(doc(db, 'referralDirectory', referralCode)).catch(() => null);
+      if (!existingRefSnap?.exists()) break;
+      referralCode = `${generateReferralCode(payload.firstName)}${Math.floor(10 + Math.random() * 89)}`;
     }
 
     const nowIso = new Date().toISOString();
@@ -947,10 +1005,12 @@ export const firestoreService = {
 
     const batch = writeBatch(db);
     batch.set(doc(db, 'users', uid), userDoc);
-    batch.set(doc(db, 'phoneDirectory', phoneKey), {
-      email: cleanEmail,
-      userId: uid,
-    });
+    if (writePhoneDir) {
+      batch.set(doc(db, 'phoneDirectory', phoneKey), {
+        email: cleanEmail,
+        userId: uid,
+      });
+    }
     batch.set(doc(db, 'referralDirectory', referralCode), {
       referralCode,
       userId: uid,
@@ -980,8 +1040,8 @@ export const firestoreService = {
     if (!verifiedSnap.exists()) {
       throw new Error('Account profile write could not be verified in Firestore. Please retry profile sync.');
     }
-    pendingProfileDraft = null;
-    return verifiedSnap.data() as RegisteredUser;
+    savePendingProfileDraft(null);
+    return normalizeUserFromDoc(verifiedSnap.id, verifiedSnap.data() as Record<string, unknown>);
   },
 
   registerMember: async (payload: {
@@ -1021,19 +1081,18 @@ export const firestoreService = {
 
     await ensureAuthPersistence();
 
-    const existingPhoneSnap = await getDoc(doc(db, 'phoneDirectory', phoneKey));
-    if (existingPhoneSnap.exists()) {
-      throw new Error('An account with this phone number already exists.');
+    const currentFbUser = auth.currentUser;
+    const isResumingCurrentAuth =
+      Boolean(currentFbUser) && currentFbUser?.email?.toLowerCase() === cleanEmail;
+
+    const existingPhoneSnap = await getDoc(doc(db, 'phoneDirectory', phoneKey)).catch(() => null);
+    if (existingPhoneSnap?.exists()) {
+      const phoneOwner = String((existingPhoneSnap.data() as { userId?: string }).userId ?? '');
+      if (!isResumingCurrentAuth || phoneOwner !== currentFbUser?.uid) {
+        throw new Error('An account with this phone number already exists.');
+      }
     }
 
-    let cred;
-    try {
-      cred = await createUserWithEmailAndPassword(auth, cleanEmail, payload.rawPassword);
-    } catch (err) {
-      throw new Error(mapFirebaseAuthError(err));
-    }
-
-    const uid = cred.user.uid;
     const draft: MemberProfileDraft = {
       firstName: payload.firstName,
       secondName: payload.secondName,
@@ -1048,20 +1107,43 @@ export const firestoreService = {
       referralCodeInput: payload.referralCodeInput,
     };
 
-    pendingRegistrationUid = uid;
-    pendingProfileDraft = draft;
+    // Set before Auth creation so onAuthStateChanged never tears down RegisterWizard mid-flight
+    pendingRegistrationUid = isResumingCurrentAuth && currentFbUser ? currentFbUser.uid : '__creating__';
+    savePendingProfileDraft(draft);
 
     try {
-      const savedUser = await firestoreService.persistMemberProfileForUid(uid, draft);
-      await sendEmailVerification(cred.user).catch(() => {});
-      return savedUser;
-    } catch (err) {
-      // IMPORTANT: Preserve the authenticated Firebase Auth account so it never disappears.
-      // AuthContext / ProfileRecoveryView will allow completing or retrying the profile write.
-      const reason = err instanceof Error ? err.message : String(err);
-      throw new Error(
-        `Your Firebase login account was created, but saving your Firestore profile failed (${reason}). Use "Complete / Sync Profile" to finish saving without losing your account.`,
-      );
+      let authUser = currentFbUser;
+      if (isResumingCurrentAuth && authUser) {
+        const existingProfile = await getDocFromServer(doc(db, 'users', authUser.uid)).catch(() => null);
+        if (existingProfile?.exists()) {
+          throw new Error('An account with this email address already exists. Sign in with your password.');
+        }
+      } else {
+        try {
+          const cred = await createUserWithEmailAndPassword(auth, cleanEmail, payload.rawPassword);
+          authUser = cred.user;
+        } catch (err) {
+          throw new Error(mapFirebaseAuthError(err));
+        }
+      }
+
+      if (!authUser) {
+        throw new Error('Authentication session could not be initialized.');
+      }
+
+      const uid = authUser.uid;
+      pendingRegistrationUid = uid;
+
+      try {
+        const savedUser = await firestoreService.persistMemberProfileForUid(uid, draft);
+        await sendEmailVerification(authUser).catch(() => {});
+        return savedUser;
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `Your Firebase login account was created, but saving your Firestore profile failed (${reason}). Use "Sync Saved Profile" to finish saving without losing your account.`,
+        );
+      }
     } finally {
       pendingRegistrationUid = null;
     }
@@ -1072,6 +1154,7 @@ export const firestoreService = {
     draft: MemberProfileDraft,
   ): Promise<RegisteredUser> => {
     pendingRegistrationUid = uid;
+    savePendingProfileDraft(draft);
     try {
       return await firestoreService.persistMemberProfileForUid(uid, draft);
     } finally {
@@ -1081,7 +1164,7 @@ export const firestoreService = {
 
   signOutCurrent: async (): Promise<void> => {
     pendingRegistrationUid = null;
-    pendingProfileDraft = null;
+    savePendingProfileDraft(null);
     await signOut(auth).catch(() => {});
   },
 
@@ -2228,10 +2311,25 @@ export const firestoreService = {
         throw new Error('Invalid withdrawal details or insufficient balance.');
       }
 
-      const feePercent = settings.withdrawalFeePercent ?? 25;
+      const isFirstBonusWithdrawal = !user.hasCompletedFirstWithdrawal;
+      const minSubsequent = settings.subsequentMinWithdrawalRwf ?? 1000;
+      const maxSubsequent = settings.subsequentMaxWithdrawalRwf ?? 5000;
+      if (isFirstBonusWithdrawal) {
+        if (grossAmountRwf < 100) {
+          throw new Error('First bonus withdrawal minimum is 100 RWF.');
+        }
+      } else {
+        if (grossAmountRwf < minSubsequent) {
+          throw new Error(`Minimum withdrawal is ${minSubsequent.toLocaleString('en-US')} RWF.`);
+        }
+        if (grossAmountRwf > maxSubsequent) {
+          throw new Error(`Maximum withdrawal per transaction is ${maxSubsequent.toLocaleString('en-US')} RWF.`);
+        }
+      }
+
+      const feePercent = isFirstBonusWithdrawal ? (settings.withdrawalFeePercent ?? 25) : 0;
       const feeRwf = Math.round((grossAmountRwf * feePercent) / 100);
       const netAmountRwf = Math.max(0, grossAmountRwf - feeRwf);
-      const isFirstBonusWithdrawal = !user.hasCompletedFirstWithdrawal;
       const nowIso = new Date().toISOString();
       const wdId = generateSafeId('wd');
 
@@ -2394,13 +2492,17 @@ export const firestoreService = {
     // Keep Firestore accumulatedSeconds within rule delta (+10 max per update)
     if (params.isPlaying && params.isVisible && acc - params.lastFirestoreSyncSec >= 2) {
       const nextSyncVal = Math.min(acc, params.lastFirestoreSyncSec + 9);
-      await updateDoc(doc(db, 'videoWatchSessions', params.sessionId), {
-        accumulatedSeconds: Number(nextSyncVal.toFixed(2)),
-        heartbeatCount: Math.max(1, Math.round(nextSyncVal)),
-        lastHeartbeatAtMs: Date.now(),
-        updatedAt: new Date().toISOString(),
-      }).catch(() => {});
-      syncedSec = nextSyncVal;
+      try {
+        await updateDoc(doc(db, 'videoWatchSessions', params.sessionId), {
+          accumulatedSeconds: Number(nextSyncVal.toFixed(2)),
+          heartbeatCount: Math.max(1, Math.round(nextSyncVal)),
+          lastHeartbeatAtMs: Date.now(),
+          updatedAt: new Date().toISOString(),
+        });
+        syncedSec = nextSyncVal;
+      } catch {
+        // Keep lastFirestoreSyncSec unchanged on transient error so delta stays accurate
+      }
     }
 
     return {
@@ -2451,9 +2553,13 @@ export const firestoreService = {
     try {
       await applyComplete();
     } catch {
-      // Allow up to 1.5s NTP/Firestore serverTimestamp boundary alignment and retry once
       await new Promise((r) => setTimeout(r, 1500));
-      await applyComplete();
+      try {
+        await applyComplete();
+      } catch {
+        await new Promise((r) => setTimeout(r, 1500));
+        await applyComplete();
+      }
     }
 
     return {
@@ -3386,23 +3492,30 @@ export const firestoreService = {
   /* Admin Operations                                                       */
   /* ---------------------------------------------------------------------- */
   adminApproveUser: async (userId: string): Promise<void> => {
-    const nowIso = new Date().toISOString();
-    const batch = writeBatch(db);
-    batch.update(doc(db, 'users', userId), {
-      accountStatus: 'awaiting_payment',
-      updatedAt: nowIso,
+    await runTransaction(db, async (tx) => {
+      const userRef = doc(db, 'users', userId);
+      const userSnap = await tx.get(userRef);
+      if (!userSnap.exists()) throw new Error('User not found.');
+      const targetUser = userSnap.data() as RegisteredUser;
+      if (targetUser.accountStatus !== 'pending_approval') {
+        throw new Error(`User is already ${targetUser.accountStatus.replace(/_/g, ' ')}.`);
+      }
+      const nowIso = new Date().toISOString();
+      tx.update(userRef, {
+        accountStatus: 'awaiting_payment',
+        updatedAt: nowIso,
+      });
+      const notifId = generateSafeId('ntf-apv');
+      tx.set(doc(db, 'notifications', notifId), {
+        id: notifId,
+        recipientId: userId,
+        title: 'Registration Approved',
+        message: 'Your E-Finance profile was approved. Complete activation payment to unlock your dashboard.',
+        category: 'Account',
+        read: false,
+        createdAt: nowIso,
+      });
     });
-    const notifId = generateSafeId('ntf-apv');
-    batch.set(doc(db, 'notifications', notifId), {
-      id: notifId,
-      recipientId: userId,
-      title: 'Registration Approved',
-      message: 'Your E-Finance profile was approved. Complete activation payment to unlock your dashboard.',
-      category: 'Account',
-      read: false,
-      createdAt: nowIso,
-    });
-    await batch.commit();
   },
 
   adminActivateUser: async (userId: string): Promise<void> => {
@@ -3414,6 +3527,12 @@ export const firestoreService = {
       const userSnap = await tx.get(userRef);
       if (!userSnap.exists()) throw new Error('User not found.');
       const targetUser = userSnap.data() as RegisteredUser;
+      if (targetUser.accountStatus === 'active') {
+        throw new Error('Account is already active.');
+      }
+      if (targetUser.accountStatus === 'suspended') {
+        throw new Error('Suspended accounts cannot be activated with welcome bonus. Unsuspend first.');
+      }
       const nowIso = new Date().toISOString();
 
       let refUserSnap = null;
@@ -3578,6 +3697,9 @@ export const firestoreService = {
     const snap = await getDoc(userRef);
     if (!snap.exists()) throw new Error('User not found.');
     const user = snap.data() as RegisteredUser;
+    if (user.kycStatus === decision) {
+      throw new Error(`KYC is already ${decision}.`);
+    }
     const nowIso = new Date().toISOString();
     const nextKycData = user.kycData
       ? omitUndefined({
@@ -3673,6 +3795,9 @@ export const firestoreService = {
     const snap = await getDoc(vidRef);
     if (!snap.exists()) throw new Error('Video campaign not found.');
     const vid = snap.data() as ShortVideoCampaign;
+    if (vid.status !== 'pending_admin') {
+      throw new Error('Video campaign has already been reviewed.');
+    }
     const nowIso = new Date().toISOString();
     const batch = writeBatch(db);
     batch.update(vidRef, { status: decision, updatedAt: nowIso });
@@ -3763,6 +3888,9 @@ export const firestoreService = {
     const snap = await getDoc(taskRef);
     if (!snap.exists()) throw new Error('Custom task not found.');
     const task = snap.data() as CustomTask;
+    if (task.status !== 'pending_admin') {
+      throw new Error('Custom task has already been reviewed.');
+    }
     const nowIso = new Date().toISOString();
     const batch = writeBatch(db);
     batch.update(taskRef, { status: decision, updatedAt: nowIso });

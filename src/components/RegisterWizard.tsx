@@ -88,6 +88,10 @@ export function RegisterWizard({
     }
     try {
       const dataUrl = await readFileAsDataUrl(file, 3);
+      if (dataUrl.length > 450000) {
+        setError('Identification photo exceeds 450 KB after compression. Please select a smaller photo.');
+        return;
+      }
       setPhotoDataUrl(dataUrl);
       setPhotoFileName(file.name);
     } catch (err) {
@@ -133,6 +137,10 @@ export function RegisterWizard({
     }
     if (!photoDataUrl) {
       setError('Upload your profile identification photo (cannot be modified by user after submission).');
+      return false;
+    }
+    if (photoDataUrl.length > 450000) {
+      setError('Profile identification photo exceeds 450 KB limit. Please upload a smaller image.');
       return false;
     }
     return true;
@@ -249,9 +257,12 @@ export function RegisterWizard({
       <div className="relative w-full max-w-2xl bg-white border border-slate-200 rounded-xl p-6 sm:p-8 shadow-2xl my-8">
         <button
           type="button"
-          onClick={onClose}
+          disabled={submitting}
+          onClick={() => {
+            if (!submitting) onClose();
+          }}
           aria-label="Close registration"
-          className="absolute right-4 top-4 w-10 h-10 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+          className="absolute right-4 top-4 w-10 h-10 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 disabled:opacity-40"
         >
           <X className="w-5 h-5" />
         </button>

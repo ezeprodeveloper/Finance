@@ -75,12 +75,14 @@ const QUESTION_BANK: QuizQuestion[] = [
   { id: 'w15', category: 'world', categoryLabel: 'World Test', question: 'Which continent has the most countries?', options: ['Asia', 'Europe', 'Africa', 'South America'], correctIndex: 2 },
 ];
 
+const MAX_QUESTIONS = 20;
 const MULTIPLIER_BY_STEP = [1.0, 1.2, 1.45, 1.75, 2.1, 2.5, 2.95, 3.45, 4.0, 4.6, 5.25];
 
 function getMultiplierForCorrectCount(count: number): number {
-  if (count <= 0) return 1;
-  if (count < MULTIPLIER_BY_STEP.length) return MULTIPLIER_BY_STEP[count];
-  return Number((5.25 + (count - 10) * 0.65).toFixed(2));
+  const boundedCount = Math.min(MAX_QUESTIONS, Math.max(0, Math.round(count)));
+  if (boundedCount <= 0) return 1;
+  if (boundedCount < MULTIPLIER_BY_STEP.length) return MULTIPLIER_BY_STEP[boundedCount];
+  return Math.min(10, Number((5.25 + (boundedCount - 10) * 0.475).toFixed(2)));
 }
 
 function shuffleQuestions(list: QuizQuestion[]): QuizQuestion[] {
@@ -95,8 +97,8 @@ function shuffleQuestions(list: QuizQuestion[]): QuizQuestion[] {
 interface QuizBetArenaProps {
   user: RegisteredUser;
   betSessions: BetSession[];
-  onStartBet: (stakeRwf: number) => void;
-  onFinishBet: (session: BetSession) => void;
+  onStartBet: (stakeRwf: number) => Promise<string | null> | void;
+  onFinishBet: (session: BetSession) => Promise<string | null> | void;
 }
 
 type RoundPhase = 'setup' | 'playing' | 'between_questions' | 'lost' | 'cashed_out';
@@ -120,13 +122,15 @@ export function QuizBetArena({
   const [endMessage, setEndMessage] = useState('');
   const [secondsLeft, setSecondsLeft] = useState(10.0);
 
+  const [startingBet, setStartingBet] = useState(false);
+
   const deadlineRef = useRef<number>(0);
   const finishedRef = useRef<boolean>(false);
 
   const currentQuestion = deck[questionIdx] ?? null;
   const currentMultiplier = getMultiplierForCorrectCount(questionsAnswered);
   const currentPayoutRwf = Math.round(activeStake * currentMultiplier);
-  const nextMultiplier = getMultiplierForCorrectCount(questionsAnswered + 1);
+  const nextMultiplier = getMultiplierForCorrectCount(Math.min(MAX_QUESTIONS, questionsAnswered + 1));
   const nextPayoutRwf = Math.round(activeStake * nextMultiplier);
 
   const recordOutcome = (
@@ -137,16 +141,18 @@ export function QuizBetArena({
   ) => {
     if (finishedRef.current) return;
     finishedRef.current = true;
-    const mult = status === 'lost' ? 0 : getMultiplierForCorrectCount(answeredCount);
-    onFinishBet({
+    const boundedAnswered = Math.min(MAX_QUESTIONS, Math.max(0, answeredCount));
+    const mult = status === 'lost' ? 0 : getMultiplierForCorrectCount(boundedAnswered);
+    const boundedPayout = status === 'lost' ? 0 : Math.min(activeStake * 10, payoutRwf);
+    void onFinishBet({
       id: `bet-${Date.now()}`,
       userId: user.id,
       userName: `${user.firstName} ${user.secondName}`,
       category,
       stakeRwf: activeStake,
-      questionsAnswered: answeredCount,
+      questionsAnswered: boundedAnswered,
       multiplier: mult,
-      payoutRwf,
+      payoutRwf: boundedPayout,
       status,
       endedReason: reason,
       createdAt: new Date().toISOString(),
@@ -181,8 +187,9 @@ export function QuizBetArena({
     [betSessions, user.id],
   );
 
-  const handleStartRound = (e: React.FormEvent) => {
+  const handleStartRound = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (startingBet) return;
     setSetupError(null);
 
     const stake = Math.round(Number(stakeInput) || 0);
@@ -200,15 +207,24 @@ export function QuizBetArena({
         ? QUESTION_BANK
         : QUESTION_BANK.filter((q) => q.category === category);
 
-    finishedRef.current = false;
-    setDeck(shuffleQuestions(pool));
-    setActiveStake(stake);
-    setQuestionIdx(0);
-    setQuestionsAnswered(0);
-    setSelectedOption(null);
-    setEndMessage('');
-    onStartBet(stake);
-    setPhase('playing');
+    setStartingBet(true);
+    try {
+      const startErr = await onStartBet(stake);
+      if (startErr) {
+        setSetupError(startErr);
+        return;
+      }
+      finishedRef.current = false;
+      setDeck(shuffleQuestions(pool));
+      setActiveStake(stake);
+      setQuestionIdx(0);
+      setQuestionsAnswered(0);
+      setSelectedOption(null);
+      setEndMessage('');
+      setPhase('playing');
+    } finally {
+      setStartingBet(false);
+    }
   };
 
   const handleChooseOption = (optIndex: number) => {
@@ -218,6 +234,21 @@ export function QuizBetArena({
     if (optIndex === currentQuestion.correctIndex) {
       const nextCount = questionsAnswered + 1;
       setQuestionsAnswered(nextCount);
+      if (nextCount >= MAX_QUESTIONS) {
+        const maxMult = getMultiplierForCorrectCount(MAX_QUESTIONS);
+        const maxPayout = Math.min(activeStake * 10, Math.round(activeStake * maxMult));
+        setPhase('cashed_out');
+        setEndMessage(
+          `Maximum Q${MAX_QUESTIONS} streak reached (${maxMult}x)! Automatically cashed out ${formatRwf(maxPayout)} to your Main Wallet.`,
+        );
+        recordOutcome(
+          'won_cashed_out',
+          MAX_QUESTIONS,
+          maxPayout,
+          `Completed maximum ${MAX_QUESTIONS}-question streak (${maxMult}x)`,
+        );
+        return;
+      }
       setPhase('between_questions');
     } else {
       setPhase('lost');
@@ -234,6 +265,7 @@ export function QuizBetArena({
   };
 
   const handleNextQuestion = () => {
+    if (questionsAnswered >= MAX_QUESTIONS) return;
     const nextIdx = questionIdx + 1;
     if (nextIdx >= deck.length) {
       // Reshuffle fresh deck so streaks can continue seamlessly!
@@ -252,14 +284,18 @@ export function QuizBetArena({
 
   const handleCashOut = () => {
     if (phase !== 'between_questions' || questionsAnswered <= 0) return;
-    const payout = Math.round(activeStake * getMultiplierForCorrectCount(questionsAnswered));
+    const boundedCount = Math.min(MAX_QUESTIONS, questionsAnswered);
+    const payout = Math.min(
+      activeStake * 10,
+      Math.round(activeStake * getMultiplierForCorrectCount(boundedCount)),
+    );
     setPhase('cashed_out');
     setEndMessage(`Congratulations! Cashed out ${formatRwf(payout)} to your Main Wallet.`);
     recordOutcome(
       'won_cashed_out',
-      questionsAnswered,
+      boundedCount,
       payout,
-      `Cashed out after ${questionsAnswered} correct answer${questionsAnswered > 1 ? 's' : ''}`,
+      `Cashed out after ${boundedCount} correct answer${boundedCount > 1 ? 's' : ''}`,
     );
   };
 
@@ -386,10 +422,11 @@ export function QuizBetArena({
 
               <button
                 type="submit"
-                className="w-full h-11 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-semibold rounded-lg inline-flex items-center justify-center gap-2"
+                disabled={startingBet}
+                className="w-full h-11 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white text-sm font-semibold rounded-lg inline-flex items-center justify-center gap-2"
               >
                 <Flame className="w-4 h-4" />
-                <span>Place Bet &amp; Start 10s Quiz</span>
+                <span>{startingBet ? 'Starting Bet...' : 'Place Bet & Start 10s Quiz'}</span>
               </button>
             </form>
           )}

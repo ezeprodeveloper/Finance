@@ -17,7 +17,7 @@ import { StatusLabel } from '../StatusLabel';
 interface InvestmentPlansViewProps {
   settings: SystemSettings;
   investments: UserInvestment[];
-  onPurchasePlan: (tier: InvestmentPlanTier, paymentRef: string) => void;
+  onPurchasePlan: (tier: InvestmentPlanTier, paymentRef: string) => Promise<string | null> | void;
 }
 
 export function InvestmentPlansView({
@@ -27,25 +27,36 @@ export function InvestmentPlansView({
 }: InvestmentPlansViewProps) {
   const [selectedTier, setSelectedTier] = useState<InvestmentPlanTier>(INVESTMENT_PLAN_TIERS[0]);
   const [paymentRef, setPaymentRef] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const ussdDisplay = buildUssdFullCode(settings.momoPayCode, selectedTier.depositRwf);
   const ussdHref = buildUssdTelHref(settings.momoPayCode, selectedTier.depositRwf);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
     setError(null);
     setNotice(null);
     if (paymentRef.trim().length < 4) {
       setError('Dial the MoMo USSD code first and enter your Transaction Reference ID.');
       return;
     }
-    onPurchasePlan(selectedTier, paymentRef.trim());
-    setPaymentRef('');
-    setNotice(
-      `Submitted ${selectedTier.name} (${formatRwf(selectedTier.depositRwf)}). Admin will confirm your MoMo deposit and activate daily ${formatRwf(selectedTier.dailyReturnRwf)} payouts.`,
-    );
+    setSubmitting(true);
+    try {
+      const err = await onPurchasePlan(selectedTier, paymentRef.trim());
+      if (err) {
+        setError(err);
+        return;
+      }
+      setPaymentRef('');
+      setNotice(
+        `Submitted ${selectedTier.name} (${formatRwf(selectedTier.depositRwf)}). Admin will confirm your MoMo deposit and activate daily ${formatRwf(selectedTier.dailyReturnRwf)} payouts.`,
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -156,9 +167,10 @@ export function InvestmentPlansView({
               </div>
               <button
                 type="submit"
-                className="w-full h-10 bg-[#071B38] hover:bg-[#0c2954] text-white text-sm font-semibold rounded-lg"
+                disabled={submitting}
+                className="w-full h-10 bg-[#071B38] hover:bg-[#0c2954] disabled:opacity-60 text-white text-sm font-semibold rounded-lg"
               >
-                Submit Plan Deposit
+                {submitting ? 'Submitting Plan...' : 'Submit Plan Deposit'}
               </button>
             </form>
           </section>

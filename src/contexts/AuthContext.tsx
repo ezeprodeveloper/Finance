@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { User as FirebaseUser } from 'firebase/auth';
 import { INITIAL_PLATFORM_STATE } from '../data/platformStore';
-import { authPersistenceReady } from '../lib/firebase';
+import { auth, authPersistenceReady } from '../lib/firebase';
 import { firestoreService, type MemberProfileDraft } from '../services/firestoreService';
 import type { PlatformStoreState, RegisteredUser, VideoWatchSessionRecord } from '../types/finance';
 
@@ -41,6 +41,7 @@ interface AuthContextValue {
   authStatus: AuthLifecycleStatus;
   profileStatus: ProfileLifecycleStatus;
   profileError: string | null;
+  isRegistering: boolean;
   role: 'guest' | 'user' | 'admin';
   store: PlatformStoreState;
   videoWatchSessions: VideoWatchSessionRecord[];
@@ -84,9 +85,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [publicStats, setPublicStats] = useState({ totalActiveVideos: 0, totalActiveTasks: 0 });
   const [actionError, setActionError] = useState<string | null>(null);
   const [workspaceGeneration, setWorkspaceGeneration] = useState(0);
+  const [isRegistering, setIsRegistering] = useState(false);
+
   const verifyingMissingRef = useRef(false);
+  const authUidRef = useRef<string | null>(null);
+  const profileStatusRef = useRef<ProfileLifecycleStatus>('idle');
+  const isRegisteringRef = useRef(false);
+  const hasUserDocRef = useRef(false);
+
+  authUidRef.current = authUid;
+  profileStatusRef.current = profileStatus;
+  isRegisteringRef.current = isRegistering;
 
   const resetToGuest = useCallback(() => {
+    hasUserDocRef.current = false;
     setFirebaseUser(null);
     setAuthUid(null);
     setRole('guest');
@@ -134,11 +146,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       unsubAuth = firestoreService.onAuthChanged(async (fbUser) => {
         if (cancelled) return;
         if (!fbUser) {
+          if (isRegisteringRef.current || firestoreService.isRegistrationPending()) {
+            return;
+          }
           resetToGuest();
           setAuthStatus('unauthenticated');
           return;
         }
 
+        const uidChanged = authUidRef.current !== fbUser.uid;
+        if (uidChanged) {
+          hasUserDocRef.current = false;
+        }
         setFirebaseUser(fbUser);
         setAuthUid(fbUser.uid);
         setAuthStatus('authenticated');
@@ -156,7 +175,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }));
         } else {
           setRole('user');
-          setProfileStatus('loading');
+          // Never overwrite an already-ready profile state back to 'loading'
+          if (uidChanged || (!hasUserDocRef.current && profileStatusRef.current !== 'ready')) {
+            setProfileStatus('loading');
+          }
           setStore((prev) => ({
             ...prev,
             session: { type: 'user', userId: fbUser.uid },
@@ -217,12 +239,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             session: { type: 'user', userId: authUid },
           }));
 
-          if (!snapshot.userDocLoaded || firestoreService.isRegistrationPending(authUid)) {
-            setProfileStatus('loading');
+          if (
+            !snapshot.userDocLoaded ||
+            isRegisteringRef.current ||
+            firestoreService.isRegistrationPending(authUid)
+          ) {
+            if (!hasUserDocRef.current && profileStatusRef.current !== 'ready') {
+              setProfileStatus('loading');
+            }
             return;
           }
 
           if (snapshot.user) {
+            hasUserDocRef.current = true;
             if (snapshot.user.accountStatus === 'suspended') {
               setActionError('Your account is currently suspended. Contact E-Finance Rwanda Admin.');
               void signOutUser();
@@ -240,6 +269,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               .getMemberProfileByUid(authUid)
               .then((serverProfile) => {
                 if (serverProfile) {
+                  hasUserDocRef.current = true;
                   setStore((prev) => ({
                     ...prev,
                     users: [serverProfile],
@@ -247,6 +277,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   }));
                   setProfileStatus('ready');
                 } else {
+                  hasUserDocRef.current = false;
                   setProfileStatus('missing');
                 }
               })
@@ -371,6 +402,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     rawPassword: string,
     referralCodeInput: string,
   ): Promise<string | null> => {
+    setIsRegistering(true);
+    isRegisteringRef.current = true;
     try {
       const created = await firestoreService.registerMember({
         firstName: newUser.firstName,
@@ -386,6 +419,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         rawPassword,
         referralCodeInput,
       });
+      hasUserDocRef.current = true;
+      if (auth.currentUser) {
+        setFirebaseUser(auth.currentUser);
+      }
       setAuthUid(created.id);
       setAuthStatus('authenticated');
       setRole('user');
@@ -398,7 +435,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }));
       return null;
     } catch (err) {
-      return err instanceof Error ? err.message : 'Registration failed. Please try again.';
+      const msg = err instanceof Error ? err.message : 'Registration failed. Please try again.';
+      // If Firebase Auth account succeeded but Firestore profile failed, route cleanly to ProfileRecoveryView
+      if (auth.currentUser) {
+        setFirebaseUser(auth.currentUser);
+        setAuthUid(auth.currentUser.uid);
+        setAuthStatus('authenticated');
+        setRole('user');
+        setProfileError(msg);
+        setProfileStatus('missing');
+      }
+      return msg;
+    } finally {
+      isRegisteringRef.current = false;
+      setIsRegistering(false);
     }
   };
 
@@ -406,6 +456,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!authUid) return 'You must be signed in to recover your profile.';
     try {
       const recovered = await firestoreService.recoverMemberProfile(authUid, draft);
+      hasUserDocRef.current = true;
       setProfileError(null);
       setProfileStatus('ready');
       setStore((prev) => ({
@@ -427,6 +478,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const serverProfile = await firestoreService.getMemberProfileByUid(authUid);
       if (serverProfile) {
+        hasUserDocRef.current = true;
         setStore((prev) => ({
           ...prev,
           users: [serverProfile],
@@ -435,6 +487,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setProfileStatus('ready');
         setWorkspaceGeneration((g) => g + 1);
       } else {
+        hasUserDocRef.current = false;
         setProfileStatus('missing');
       }
     } catch (err) {
@@ -492,6 +545,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         authStatus,
         profileStatus,
         profileError,
+        isRegistering,
         role,
         store,
         videoWatchSessions,

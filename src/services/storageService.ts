@@ -85,6 +85,10 @@ function inferVideoContentType(file: File): string {
   return 'video/mp4';
 }
 
+const STORAGE_FAST_RETRY_MS = 3500;
+const STORAGE_UPLOAD_TIMEOUT_MS = 4000;
+let storageBucketUnavailable = false;
+
 function isStorageBucketUnavailable(err: unknown): boolean {
   const code =
     typeof err === 'object' && err !== null && 'code' in err
@@ -94,7 +98,7 @@ function isStorageBucketUnavailable(err: unknown): boolean {
     typeof err === 'object' && err !== null && 'status_' in err
       ? Number((err as { status_: unknown }).status_)
       : 0;
-  const msg = err instanceof Error ? err.message : String(err);
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
   return (
     status === 404 ||
     code === 'storage/unknown' ||
@@ -102,9 +106,58 @@ function isStorageBucketUnavailable(err: unknown): boolean {
     code === 'storage/project-not-found' ||
     code === 'storage/unauthenticated' ||
     code === 'storage/unauthorized' ||
+    code === 'storage/retry-limit-exceeded' ||
+    code === 'storage/canceled' ||
     msg.includes('storage/unknown') ||
-    msg.includes('404')
+    msg.includes('storage/bucket-unavailable') ||
+    msg.includes('storage/retry-limit-exceeded') ||
+    msg.includes('storage/canceled') ||
+    msg.includes('404') ||
+    msg.includes('failed to fetch') ||
+    msg.includes('networkerror') ||
+    msg.includes('cors') ||
+    msg.includes('err_failed') ||
+    msg.includes('timeout')
   );
+}
+
+async function uploadToStorageFast(
+  storagePath: string,
+  data: Blob | File,
+  metadata: { contentType: string; customMetadata?: Record<string, string> },
+): Promise<string> {
+  if (storageBucketUnavailable) {
+    throw new Error('storage/bucket-unavailable');
+  }
+  try {
+    storage.maxUploadRetryTime = STORAGE_FAST_RETRY_MS;
+    storage.maxOperationRetryTime = STORAGE_FAST_RETRY_MS;
+  } catch {
+    // Ignore if storage instance properties are read-only in test/mock environments
+  }
+
+  const fileRef = ref(storage, storagePath);
+  const uploadTask = (async () => {
+    await uploadBytes(fileRef, data, metadata);
+    return getDownloadURL(fileRef);
+  })();
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      uploadTask,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('storage/retry-limit-exceeded')), STORAGE_UPLOAD_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (err) {
+    if (isStorageBucketUnavailable(err)) {
+      storageBucketUnavailable = true;
+    }
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export async function uploadPersistentDataUrl(params: {
@@ -133,15 +186,13 @@ export async function uploadPersistentDataUrl(params: {
   const storagePath = `${params.folder}/${params.ownerUid}/${safePrefix}-${Date.now()}.${extension}`;
 
   try {
-    const fileRef = ref(storage, storagePath);
-    await uploadBytes(fileRef, blob, {
+    const downloadUrl = await uploadToStorageFast(storagePath, blob, {
       contentType,
       customMetadata: {
         uploadedBy: params.ownerUid,
         uploadedAt: nowIso,
       },
     });
-    const downloadUrl = await getDownloadURL(fileRef);
     return {
       url: downloadUrl,
       metadata: {
@@ -156,6 +207,7 @@ export async function uploadPersistentDataUrl(params: {
     if (!isStorageBucketUnavailable(err)) {
       throw err;
     }
+    storageBucketUnavailable = true;
     return {
       url: trimmed,
       metadata: {
@@ -269,8 +321,7 @@ export async function uploadPersistentVideo(params: {
     params.onProgress?.(10, 'Preparing video upload…');
 
     try {
-      const fileRef = ref(storage, storagePath);
-      await uploadBytes(fileRef, file, {
+      const downloadUrl = await uploadToStorageFast(storagePath, file, {
         contentType,
         customMetadata: {
           uploadedBy: params.ownerUid,
@@ -278,7 +329,6 @@ export async function uploadPersistentVideo(params: {
           uploadedAt: nowIso,
         },
       });
-      const downloadUrl = await getDownloadURL(fileRef);
       params.onProgress?.(100, 'Video uploaded to cloud storage');
       return {
         url: downloadUrl,
@@ -294,6 +344,7 @@ export async function uploadPersistentVideo(params: {
       if (!isStorageBucketUnavailable(err)) {
         throw err;
       }
+      storageBucketUnavailable = true;
       params.onProgress?.(15, 'Encoding video for Cloud Firestore storage…');
       const buffer = await file.arrayBuffer();
       const base64 = uint8ArrayToBase64(new Uint8Array(buffer));
@@ -347,9 +398,7 @@ export async function uploadPersistentVideo(params: {
     }
     const storagePath = `campaigns/${params.ownerUid}/${params.videoId}.${extension}`;
     try {
-      const fileRef = ref(storage, storagePath);
-      await uploadBytes(fileRef, blob, { contentType });
-      const downloadUrl = await getDownloadURL(fileRef);
+      const downloadUrl = await uploadToStorageFast(storagePath, blob, { contentType });
       return {
         url: downloadUrl,
         metadata: {
@@ -364,6 +413,7 @@ export async function uploadPersistentVideo(params: {
       if (!isStorageBucketUnavailable(err)) {
         throw err;
       }
+      storageBucketUnavailable = true;
       return saveChunkedVideoToFirestore({
         ownerUid: params.ownerUid,
         videoId: params.videoId,
@@ -427,10 +477,14 @@ export function parseVideoSource(rawUrl: string): ParsedVideoSource {
     );
   if (ytMatch) {
     const videoId = ytMatch[1];
+    const originParam =
+      typeof window !== 'undefined' && window.location?.origin?.startsWith('http')
+        ? `&origin=${encodeURIComponent(window.location.origin)}`
+        : '';
     return {
       kind: 'youtube',
       videoId,
-      embedUrl: `https://www.youtube.com/embed/${videoId}?rel=0&modestbranding=1&enablejsapi=1&playsinline=1`,
+      embedUrl: `https://www.youtube.com/embed/${videoId}?rel=0&modestbranding=1&enablejsapi=1&playsinline=1${originParam}`,
       watchUrl: `https://www.youtube.com/watch?v=${videoId}`,
     };
   }

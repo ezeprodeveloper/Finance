@@ -216,38 +216,66 @@ export function readFileAsDataUrl(file: File, maxSizeMb = 4): Promise<string> {
       }
       const rawDataUrl = reader.result;
       if (!file.type.startsWith('image/') || typeof Image === 'undefined') {
+        if (rawDataUrl.length > 420_000) {
+          reject(new Error('File exceeds the 420 KB encoded size limit.'));
+          return;
+        }
         resolve(rawDataUrl);
         return;
       }
       const img = new Image();
       img.onload = () => {
-        const maxDim = 640;
-        let { width, height } = img;
-        if (width > maxDim || height > maxDim) {
-          if (width >= height) {
-            height = Math.round((height * maxDim) / width);
-            width = maxDim;
-          } else {
-            width = Math.round((width * maxDim) / height);
-            height = maxDim;
-          }
-        }
         const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
         const ctx = canvas.getContext('2d');
         if (!ctx) {
+          if (rawDataUrl.length > 420_000) {
+            reject(new Error('Unable to compress image under 420 KB.'));
+            return;
+          }
           resolve(rawDataUrl);
           return;
         }
-        ctx.drawImage(img, 0, 0, width, height);
-        let compressed = canvas.toDataURL('image/jpeg', 0.72);
-        if (compressed.length > 180000) {
-          compressed = canvas.toDataURL('image/jpeg', 0.52);
+
+        const attempts: Array<{ maxDim: number; quality: number }> = [
+          { maxDim: 640, quality: 0.72 },
+          { maxDim: 480, quality: 0.56 },
+          { maxDim: 360, quality: 0.42 },
+          { maxDim: 280, quality: 0.3 },
+        ];
+
+        let best = '';
+        for (const attempt of attempts) {
+          let { width, height } = img;
+          if (width > attempt.maxDim || height > attempt.maxDim) {
+            if (width >= height) {
+              height = Math.max(1, Math.round((height * attempt.maxDim) / width));
+              width = attempt.maxDim;
+            } else {
+              width = Math.max(1, Math.round((width * attempt.maxDim) / height));
+              height = attempt.maxDim;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          ctx.clearRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+          const candidate = canvas.toDataURL('image/jpeg', attempt.quality);
+          best = candidate;
+          if (candidate.length <= 360_000) {
+            resolve(candidate);
+            return;
+          }
         }
-        resolve(compressed.length < rawDataUrl.length ? compressed : rawDataUrl);
+
+        const finalResult = best && best.length < rawDataUrl.length ? best : rawDataUrl;
+        if (finalResult.length > 420_000) {
+          reject(new Error('Image is still too large after compression. Choose a smaller JPG or PNG photo.'));
+          return;
+        }
+        resolve(finalResult);
       };
-      img.onerror = () => resolve(rawDataUrl);
+      img.onerror = () =>
+        reject(new Error('Unsupported or corrupted image file. Please select a valid JPG, PNG, or WebP image.'));
       img.src = rawDataUrl;
     };
     reader.onerror = () => reject(new Error('File reading failed.'));
